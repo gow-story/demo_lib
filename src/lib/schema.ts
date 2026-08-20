@@ -1,5 +1,9 @@
 import { z } from 'zod';
 
+// Explicit extension: the check scripts load this module through Node's ESM
+// resolver, which does not do extensionless resolution.
+import { NAV_HREF } from './nav-href.ts';
+
 /**
  * DemoPackage — the only thing the LLM produces.
  *
@@ -85,11 +89,28 @@ export const HeroSchema = z.object({
   badge: plainText(120),
 });
 
-/** Guideline 6: exactly two paragraphs — situation, then how it's addressed. */
+/**
+ * Guideline 6: exactly two paragraphs — situation, then how it's addressed.
+ * The 250-character cap is deliberate pressure on the generation step: real
+ * paste tests came back too wordy, and there is no editing pass downstream.
+ */
+export const PURPOSE_PARAGRAPH_MAX = 250;
+
 export const PurposeSchema = z.object({
-  challenge: paragraph(80, 700),
-  solution: paragraph(80, 700),
+  challenge: paragraph(80, PURPOSE_PARAGRAPH_MAX),
+  solution: paragraph(80, PURPOSE_PARAGRAPH_MAX),
 });
+
+/**
+ * An internal OvalEdge route. Query strings are allowed — tag pages look like
+ * `#nav/tagsview?browse=tiles&id=1143&objectType=oetag&masterTagId=1063`.
+ * Anything with a scheme (http:, https:, javascript:) fails the `#nav/` prefix.
+ */
+export const NavHrefSchema = z
+  .string()
+  .trim()
+  .max(300, 'must be 300 characters or fewer')
+  .regex(NAV_HREF, 'must be an internal #nav/... route');
 
 /** Guideline 5: title plus one short sentence. No bullets, no specs. */
 export const CardSchema = z.object({
@@ -98,6 +119,42 @@ export const CardSchema = z.object({
     (v) => !/^\s*[-*•]/.test(v),
     'must be a sentence, not a bullet list',
   ),
+  /** Optional tag page. Absent means the card renders as plain text. */
+  tagHref: NavHrefSchema.optional(),
+});
+
+/** The fixed OvalEdge destinations a homepage can link to from Quick Access. */
+export const QuickAccessLinkSchema = z.enum([
+  'search',
+  'glossary',
+  'marketplace',
+  'lineage',
+]);
+
+/** `#rrggbb` or `#rgb`. */
+export const HexColorSchema = z
+  .string()
+  .trim()
+  .regex(
+    /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/,
+    'must be a hex color such as #0f6fb5',
+  );
+
+/**
+ * The prospect's palette. These drive the template directly, which is why they
+ * are validated as hex rather than left as free strings — an unparseable color
+ * silently renders as no color at all in the Froala editor.
+ */
+export const BrandSchema = z.object({
+  primary: HexColorSchema,
+  secondary: HexColorSchema,
+  dark: HexColorSchema,
+  light: HexColorSchema,
+});
+
+export const ProspectSchema = z.object({
+  name: plainText(80),
+  brand: BrandSchema,
 });
 
 export const HomepageSchema = z.object({
@@ -112,14 +169,26 @@ export const HomepageSchema = z.object({
         new Set(cards.map((c) => c.title.toLowerCase())).size === cards.length,
       'card titles must be distinct',
     ),
+  /** Rendered in the order given; only the listed destinations appear. */
+  quickAccessLinks: z
+    .array(QuickAccessLinkSchema)
+    .refine(
+      (links) => new Set(links).size === links.length,
+      'quick access links must not repeat',
+    ),
   /** Guideline 7: one short, conclusive sentence. */
   footerStatement: plainText(160),
 });
 
 export const DemoPackageSchema = z.object({
+  prospect: ProspectSchema,
   homepage: HomepageSchema,
 });
 
+export type HexColor = z.infer<typeof HexColorSchema>;
+export type Brand = z.infer<typeof BrandSchema>;
+export type Prospect = z.infer<typeof ProspectSchema>;
+export type QuickAccessLink = z.infer<typeof QuickAccessLinkSchema>;
 export type CardPattern = z.infer<typeof CardPatternSchema>;
 export type Hero = z.infer<typeof HeroSchema>;
 export type Purpose = z.infer<typeof PurposeSchema>;

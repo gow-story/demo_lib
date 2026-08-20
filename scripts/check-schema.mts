@@ -4,7 +4,11 @@
  *
  * Run: npm run check:schema
  */
-import { DemoPackageSchema, type DemoPackage } from '../src/lib/schema.ts';
+import {
+  DemoPackageSchema,
+  PURPOSE_PARAGRAPH_MAX,
+  type DemoPackage,
+} from '../src/lib/schema.ts';
 import { sampleDemoPackage } from '../src/lib/sample.ts';
 
 let failures = 0;
@@ -58,6 +62,45 @@ const rejectionCases: Array<{ name: string; mutate: (pkg: DemoPackage) => void }
       pkg.homepage.cards[0].description = '- Search across every connected source.';
     },
   },
+  {
+    name: 'brand color that is not hex',
+    mutate: (pkg) => {
+      pkg.prospect.brand.primary = 'cornflowerblue';
+    },
+  },
+  {
+    name: 'hex brand color missing the hash',
+    mutate: (pkg) => {
+      pkg.prospect.brand.dark = '0b2b45';
+    },
+  },
+  {
+    name: 'purpose paragraph over the character cap',
+    mutate: (pkg) => {
+      pkg.homepage.purpose.challenge = `${pkg.homepage.purpose.challenge} `.padEnd(
+        PURPOSE_PARAGRAPH_MAX + 20,
+        'x',
+      );
+    },
+  },
+  {
+    name: 'external card tagHref',
+    mutate: (pkg) => {
+      pkg.homepage.cards[0].tagHref = 'https://ovaledge.com/tags/1143';
+    },
+  },
+  {
+    name: 'unknown quick access destination',
+    mutate: (pkg) => {
+      (pkg.homepage.quickAccessLinks as string[]).push('dashboards');
+    },
+  },
+  {
+    name: 'repeated quick access destination',
+    mutate: (pkg) => {
+      pkg.homepage.quickAccessLinks.push('search');
+    },
+  },
 ];
 
 for (const { name, mutate } of rejectionCases) {
@@ -70,6 +113,18 @@ for (const { name, mutate } of rejectionCases) {
   } else {
     console.log(`PASS  "${name}" rejected: ${parsed.error.issues[0].message}`);
   }
+}
+
+// A tag page route carries a query string — it must survive validation intact.
+const withTagHref: DemoPackage = structuredClone(sampleDemoPackage);
+withTagHref.homepage.cards[2].tagHref =
+  '#nav/tagsview?browse=tiles&id=1151&objectType=oetag&masterTagId=1063';
+const tagHrefCheck = DemoPackageSchema.safeParse(withTagHref);
+if (tagHrefCheck.success) {
+  console.log('PASS  "#nav route with a query string" accepted');
+} else {
+  failures++;
+  console.log(`FAIL  tagHref with query string rejected: ${tagHrefCheck.error.issues[0].message}`);
 }
 
 if (failures > 0) {

@@ -53,7 +53,10 @@ No external font imports, no proprietary/branded fonts.
 
 ## Links
 
-Internal navigation only, as hash routes — never external URLs for nav:
+Internal navigation only, as hash routes — never external URLs. Any `#nav/...` route
+is allowed, including one carrying a query string.
+
+Quick Access destinations:
 
 ```
 #nav/search
@@ -61,6 +64,19 @@ Internal navigation only, as hash routes — never external URLs for nav:
 #nav/marketplace
 #nav/lineage
 ```
+
+Tag pages, confirmed in a paste test — note the query string:
+
+```
+#nav/tagsview?browse=tiles&id=1143&objectType=oetag&masterTagId=1063
+```
+
+The `&` separators must be written as `&amp;` in the `href` attribute; that is ordinary
+attribute encoding and survives a save/reload round trip.
+
+Rule for the validator: an `href` must match `#nav/` followed by at least one
+non-whitespace character. Anything carrying a scheme — `http:`, `https:`, `javascript:` —
+is rejected, as is a protocol-relative `//host/path`.
 
 ## Images
 
