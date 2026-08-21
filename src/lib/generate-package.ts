@@ -52,6 +52,7 @@ Return ONLY a JSON object. No prose, no explanation, no code fence.
         "businessDescription": string,
         "detailDescription": string (optional),
         "isHeroMetric": boolean,
+        "componentTerms": string[] (hero metric only, 2-3 term names),
         "formula": string (optional),
         "components": string (optional),
         "commonMistakes": string (optional),
@@ -84,8 +85,6 @@ Hard rules, each enforced by a validator that will reject your output:
   "democratize data", "revolutionize".
 - "quickAccessLinks" is any subset of the four allowed values, in the order you
   want them rendered. Pick the ones the discovery context actually justifies.
-- Do NOT emit a "tagHref" on any card. Tag page links are added by hand later,
-  and a made-up tag id is worse than no link.
 
 ## Glossary rules
 
@@ -94,9 +93,43 @@ Hard rules, each enforced by a validator that will reject your output:
   data-governance vocabulary.
 - "businessDescription": what the term means to the business, in their language.
   300 characters or fewer. Plain language, not a data dictionary entry.
-- EXACTLY ONE term has "isHeroMetric": true. Every other term has false. The hero
-  metric is the single number the demo walks through end to end — pick the one
-  the discovery context suggests they argue about most.
+- EXACTLY ONE term has "isHeroMetric": true. Every other term has false.
+
+## Designing the glossary around the hero metric
+
+The hero metric is a DERIVED metric, and the terms it is derived from are also
+terms in this glossary. That is what makes the demo tell a story: here is a
+number, and here is what it is built from.
+
+Worked example. Hero metric "Fuel Margin", derived from two other terms that are
+themselves defined in the same glossary:
+
+  "Fuel Margin"    isHeroMetric: true
+                   componentTerms: ["Fuel Revenue", "Fuel Expenses"]
+                   formula: "Fuel Margin = Fuel Revenue - Fuel Expenses"
+  "Fuel Revenue"   isHeroMetric: false
+  "Fuel Expenses"  isHeroMetric: false
+
+Design it in this order, or you will not get a coherent result:
+1. Choose a derived metric this customer actually argues about — one built from
+   other quantities, not a standalone count.
+2. Decide the 2 or 3 quantities it is derived from.
+3. Write those quantities as full glossary terms, with their own names and
+   business descriptions.
+4. Write the hero metric, listing those exact term names in "componentTerms" and
+   using them by name in "formula".
+5. Fill the remaining slots with other terms this customer cares about.
+
+Do NOT pick a term first and invent components for it afterwards.
+
+Hard requirements the validator enforces:
+- Every name in "componentTerms" must exactly match the "termName" of another
+  term in this same glossary. A component naming a term you did not define is
+  rejected.
+- "componentTerms" holds 2 or 3 names, all distinct, and never the hero metric
+  itself.
+- Only the hero metric carries "componentTerms".
+- "formula" must reference every component term by name, spelled the same way.
 - The hero metric MUST carry "formula", and should also carry "components",
   "commonMistakes", "bestPractices", and "abbreviations".
 - Ordinary terms should NOT carry those five fields. A glossary where every term
@@ -131,21 +164,6 @@ function buildTaskPrompt(input: GenerateHomepageInput): string {
   }
 
   return lines.join('\n');
-}
-
-/** The model must not supply tag hrefs; those stay manual. */
-function stripTagHrefs(value: unknown): unknown {
-  if (!value || typeof value !== 'object') return value;
-  const root = value as { homepage?: { cards?: unknown } };
-  const cards = root.homepage?.cards;
-  if (Array.isArray(cards)) {
-    for (const card of cards) {
-      if (card && typeof card === 'object') {
-        delete (card as { tagHref?: unknown }).tagHref;
-      }
-    }
-  }
-  return value;
 }
 
 function formatIssues(error: z.ZodError): string[] {
@@ -242,7 +260,7 @@ export async function generatePackage(
     rawOutput = messageText(call.message);
 
     try {
-      const json = stripTagHrefs(extractJsonObject(rawOutput)) as {
+      const json = extractJsonObject(rawOutput) as {
         prospect?: { name?: unknown };
         homepage?: unknown;
         glossary?: unknown;

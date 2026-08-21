@@ -1,9 +1,5 @@
 import { z } from 'zod';
 
-// Explicit extension: the check scripts load this module through Node's ESM
-// resolver, which does not do extensionless resolution.
-import { NAV_HREF } from './nav-href.ts';
-
 /**
  * DemoPackage — the only thing the LLM produces.
  *
@@ -167,17 +163,6 @@ export const PurposeSchema = z.object({
   solution: paragraph(80, PURPOSE_PARAGRAPH_MAX),
 });
 
-/**
- * An internal OvalEdge route. Query strings are allowed — tag pages look like
- * `#nav/tagsview?browse=tiles&id=1143&objectType=oetag&masterTagId=1063`.
- * Anything with a scheme (http:, https:, javascript:) fails the `#nav/` prefix.
- */
-export const NavHrefSchema = z
-  .string()
-  .trim()
-  .max(300, 'must be 300 characters or fewer')
-  .regex(NAV_HREF, 'must be an internal #nav/... route');
-
 /** Guideline 5: title plus one short sentence. No bullets, no specs. */
 export const CardSchema = z.object({
   title: plainText(48),
@@ -185,8 +170,6 @@ export const CardSchema = z.object({
     (v) => !/^\s*[-*•]/.test(v),
     'must be a sentence, not a bullet list',
   ),
-  /** Optional tag page. Absent means the card renders as plain text. */
-  tagHref: NavHrefSchema.optional(),
 });
 
 /** The fixed OvalEdge destinations a homepage can link to from Quick Access. */
@@ -258,15 +241,56 @@ export const GlossaryTermSchema = z.object({
   termName: plainText(60),
   businessDescription: richText(300),
   detailDescription: richText(1200).optional(),
+  /** The model decides this, not the SE. Exactly one term carries it. */
   isHeroMetric: z.boolean(),
   /** How the metric is calculated. Required on the hero metric. */
   formula: richText(300).optional(),
-  /** The inputs the formula draws on. */
+  /**
+   * The names of the 2–3 glossary terms this metric is derived from. Hero
+   * metric only, and every name must match another term in the same glossary —
+   * that cross-reference is what makes the demo a story rather than a list.
+   */
+  componentTerms: z.array(plainText(60)).optional(),
+  /** Prose about the inputs, distinct from the machine-checked names above. */
   components: richText(600).optional(),
   commonMistakes: richText(800).optional(),
   bestPractices: richText(800).optional(),
   abbreviations: richText(300).optional(),
 });
+
+/** Structural shape the glossary-wide refinements work over. */
+interface TermLike {
+  termName: string;
+  isHeroMetric: boolean;
+  formula?: string | undefined;
+  componentTerms?: string[] | undefined;
+}
+
+const normalizeName = (value: string) => value.trim().toLowerCase();
+const heroTerm = (terms: TermLike[]) => terms.find((term) => term.isHeroMetric);
+
+export const HERO_COMPONENT_MIN = 2;
+export const HERO_COMPONENT_MAX = 3;
+
+/** Component names that do not match any other term in the glossary. */
+function unresolvedComponents(terms: TermLike[]): string[] {
+  const hero = heroTerm(terms);
+  if (!hero?.componentTerms) return [];
+  const others = new Set(
+    terms.filter((t) => !t.isHeroMetric).map((t) => normalizeName(t.termName)),
+  );
+  return hero.componentTerms.filter((name) => !others.has(normalizeName(name)));
+}
+
+/** Component names the formula never mentions. */
+function componentsMissingFromFormula(terms: TermLike[]): string[] {
+  const hero = heroTerm(terms);
+  if (!hero?.componentTerms || !hero.formula) return [];
+  const formula = normalizeName(hero.formula);
+  return hero.componentTerms.filter(
+    (name) => !formula.includes(normalizeName(name)),
+  );
+}
 
 export const GLOSSARY_MIN_TERMS = 6;
 export const GLOSSARY_MAX_TERMS = 8;
@@ -293,7 +317,49 @@ export const GlossarySchema = z.object({
     .refine(
       (terms) => terms.every((t) => !t.isHeroMetric || Boolean(t.formula)),
       'the hero metric must carry a formula',
-    ),
+    )
+    .refine(
+      (terms) => {
+        const count = heroTerm(terms)?.componentTerms?.length ?? 0;
+        return count >= HERO_COMPONENT_MIN && count <= HERO_COMPONENT_MAX;
+      },
+      `the hero metric must declare ${HERO_COMPONENT_MIN}–${HERO_COMPONENT_MAX} componentTerms`,
+    )
+    .refine(
+      (terms) => terms.every((t) => t.isHeroMetric || !t.componentTerms?.length),
+      'only the hero metric may declare componentTerms',
+    )
+    .refine(
+      (terms) => {
+        const hero = heroTerm(terms);
+        if (!hero?.componentTerms) return true;
+        const names = hero.componentTerms.map(normalizeName);
+        return (
+          new Set(names).size === names.length &&
+          !names.includes(normalizeName(hero.termName))
+        );
+      },
+      'componentTerms must be distinct and must not include the hero metric itself',
+    )
+    // The cross-reference. A component naming a term that is not in the
+    // glossary breaks the story the demo is meant to tell, so it is invalid
+    // rather than merely untidy.
+    .refine((terms) => unresolvedComponents(terms).length === 0, {
+      error: (issue) =>
+        `componentTerms name terms that are not in this glossary: ${unresolvedComponents(
+          issue.input as TermLike[],
+        )
+          .map((name) => `"${name}"`)
+          .join(', ')}`,
+    })
+    .refine((terms) => componentsMissingFromFormula(terms).length === 0, {
+      error: (issue) =>
+        `the formula must reference each component term by name; missing: ${componentsMissingFromFormula(
+          issue.input as TermLike[],
+        )
+          .map((name) => `"${name}"`)
+          .join(', ')}`,
+    }),
 });
 
 export const DemoPackageSchema = z.object({

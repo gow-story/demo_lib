@@ -10,11 +10,11 @@ import {
   type PublishResponse,
 } from '../actions';
 import type { LogoAsset } from '@/src/lib/brand';
+import type { CreatedTerm } from '@/src/lib/ovaledge/client';
 import { GenerationProgress, type Stage, type StageState } from './generation-progress';
 import { companyNameFromDomain, normalizeDomain } from '@/src/lib/domain';
-import { NAV_HREF } from '@/src/lib/nav-href';
 import { buildDetailDescription } from '@/src/lib/ovaledge/map-terms';
-import type { Brand, DemoPackage, GlossaryTerm } from '@/src/lib/schema';
+import type { DemoPackage, GlossaryTerm } from '@/src/lib/schema';
 import { LOGO_PLACEHOLDER_SRC, renderHomepage } from '@/src/templates/homepage';
 import { validateFroalaHtml } from '@/src/templates/validate';
 
@@ -27,19 +27,12 @@ import { validateFroalaHtml } from '@/src/templates/validate';
  * Editing a color never costs an API call.
  */
 
-const BRAND_ROLES: Array<{ key: keyof Brand; label: string; hint: string }> = [
-  { key: 'primary', label: 'Primary', hint: 'Card titles and links, on white' },
-  { key: 'secondary', label: 'Secondary', hint: 'Accent rule above each card' },
-  { key: 'dark', label: 'Dark', hint: 'Hero background, white text on top' },
-  { key: 'light', label: 'Light', hint: 'Purpose panel tint' },
-];
-
-const BRAND_ORIGIN_LABEL: Record<string, string> = {
-  'site-extraction': 'Extracted from the company site',
-  fallback: 'Neutral palette',
+/** One line per outcome. The palette itself is no longer editable. */
+const BRAND_OUTCOME: Record<string, string> = {
+  'site-extraction': 'Brand colours found on the site and applied.',
+  fallback:
+    'No brand colours found on the site — a neutral fallback palette is in use.',
 };
-
-const EMPTY_TAG_HREFS = ['', '', ''];
 
 /**
  * The three stages the browser can genuinely observe. Brand extraction and
@@ -76,7 +69,6 @@ export function HomepageBuilder() {
     logo?: LogoAsset;
   } | null>(null);
   const [pkg, setPkg] = useState<DemoPackage | null>(null);
-  const [tagHrefs, setTagHrefs] = useState<string[]>(EMPTY_TAG_HREFS);
   const [copied, setCopied] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [publishResult, setPublishResult] = useState<PublishResponse | null>(null);
@@ -88,23 +80,9 @@ export function HomepageBuilder() {
    */
   const rendered = useMemo(() => {
     if (!pkg) return null;
-
-    const withHrefs: DemoPackage = {
-      ...pkg,
-      homepage: {
-        ...pkg.homepage,
-        cards: pkg.homepage.cards.map((card, index) => {
-          const href = tagHrefs[index]?.trim() ?? '';
-          return href && NAV_HREF.test(href)
-            ? { ...card, tagHref: href }
-            : { ...card, tagHref: undefined };
-        }),
-      },
-    };
-
-    const html = renderHomepage(withHrefs);
+    const html = renderHomepage(pkg);
     return { html, validation: validateFroalaHtml(html) };
-  }, [pkg, tagHrefs]);
+  }, [pkg]);
 
   function markStage(id: string, state: StageState, detail?: string) {
     setStages((current) =>
@@ -122,7 +100,6 @@ export function HomepageBuilder() {
     setResult(null);
     setBrandInfo(null);
     setPkg(null);
-    setTagHrefs(EMPTY_TAG_HREFS);
     setPublishResult(null);
     setStages(
       INITIAL_STAGES.map((stage) =>
@@ -184,20 +161,6 @@ export function HomepageBuilder() {
     setBusy(false);
   }
 
-  function setBrandColor(role: keyof Brand, value: string) {
-    setPkg((current) =>
-      current
-        ? {
-            ...current,
-            prospect: {
-              ...current.prospect,
-              brand: { ...current.prospect.brand, [role]: value },
-            },
-          }
-        : current,
-    );
-  }
-
   function updateTerm(index: number, patch: Partial<GlossaryTerm>) {
     setPkg((current) =>
       current
@@ -207,23 +170,6 @@ export function HomepageBuilder() {
               terms: current.glossary.terms.map((term, i) =>
                 i === index ? { ...term, ...patch } : term,
               ),
-            },
-          }
-        : current,
-    );
-  }
-
-  /** Exactly one hero metric — selecting one clears the rest. */
-  function selectHeroMetric(index: number) {
-    setPkg((current) =>
-      current
-        ? {
-            ...current,
-            glossary: {
-              terms: current.glossary.terms.map((term, i) => ({
-                ...term,
-                isHeroMetric: i === index,
-              })),
             },
           }
         : current,
@@ -252,7 +198,7 @@ export function HomepageBuilder() {
     <div className="mx-auto w-full max-w-7xl px-6 py-10">
       <header className="mb-8">
         <h1 className="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
-          Demo Lib
+          Demo Kit
         </h1>
         <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
           Discovery notes in, OvalEdge-ready homepage HTML out.
@@ -318,10 +264,13 @@ export function HomepageBuilder() {
             <button
               type="submit"
               disabled={busy || !resolvedSite}
-              className="rounded-md bg-zinc-900 px-4 py-2.5 text-sm font-medium text-white disabled:opacity-40 dark:bg-zinc-100 dark:text-zinc-900"
+              className="cursor-pointer rounded-md bg-zinc-900 px-4 py-2.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-40 dark:bg-zinc-100 dark:text-zinc-900"
             >
               {busy ? 'Searching and generating…' : 'Generate'}
             </button>
+            <p className="text-center text-xs text-zinc-500">
+              Generation takes about 60 seconds.
+            </p>
           </form>
 
           {result && !result.ok && (
@@ -358,91 +307,15 @@ export function HomepageBuilder() {
 
           {pkg && result?.ok && (
             <>
-              <section className="flex flex-col gap-3">
-                <div>
-                  <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                    Brand colors
-                  </h2>
-                  <p className="text-xs text-zinc-500">
-                    {brandInfo
-                      ? `${BRAND_ORIGIN_LABEL[brandInfo.origin] ?? brandInfo.origin} — ${brandInfo.note}`
-                      : 'Palette applied.'}
-                  </p>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  {BRAND_ROLES.map(({ key, label, hint }) => (
-                    <label
-                      key={key}
-                      className="flex items-center gap-3 rounded-md border border-zinc-200 p-2.5 dark:border-zinc-800"
-                    >
-                      <input
-                        type="color"
-                        value={pkg.prospect.brand[key]}
-                        onChange={(e) => setBrandColor(key, e.target.value)}
-                        aria-label={`${label} color`}
-                        className="h-9 w-9 shrink-0 cursor-pointer rounded border-0 bg-transparent p-0"
-                      />
-                      <span className="min-w-0">
-                        <span className="block text-xs font-medium text-zinc-800 dark:text-zinc-200">
-                          {label}{' '}
-                          <span className="font-mono text-zinc-500">
-                            {pkg.prospect.brand[key]}
-                          </span>
-                        </span>
-                        <span className="block truncate text-[11px] text-zinc-500">
-                          {hint}
-                        </span>
-                      </span>
-                    </label>
-                  ))}
-                </div>
-              </section>
+              {/* One line, no swatches. The palette is good enough that the
+                  editing controls were only noise. */}
+              <p className="text-xs text-zinc-600 dark:text-zinc-400">
+                {brandInfo
+                  ? (BRAND_OUTCOME[brandInfo.origin] ?? brandInfo.note)
+                  : 'Palette applied.'}
+              </p>
 
               <LogoSection logo={brandInfo?.logo} />
-
-              <section className="flex flex-col gap-3">
-                <div>
-                  <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                    Card tag links
-                  </h2>
-                  <p className="text-xs text-zinc-500">
-                    Optional and manual — paste a real tag page route. Empty
-                    means the card renders as plain text.
-                  </p>
-                </div>
-                {pkg.homepage.cards.map((card, index) => {
-                  const value = tagHrefs[index] ?? '';
-                  const invalid = value.trim() !== '' && !NAV_HREF.test(value.trim());
-                  return (
-                    <label key={card.title} className="flex flex-col gap-1">
-                      <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
-                        {card.title}
-                      </span>
-                      <input
-                        value={value}
-                        onChange={(e) =>
-                          setTagHrefs((current) =>
-                            current.map((href, i) =>
-                              i === index ? e.target.value : href,
-                            ),
-                          )
-                        }
-                        placeholder="#nav/tagsview?browse=tiles&id=…&objectType=oetag&masterTagId=…"
-                        className={`rounded-md border bg-white px-3 py-1.5 font-mono text-xs text-zinc-900 outline-none dark:bg-zinc-900 dark:text-zinc-100 ${
-                          invalid
-                            ? 'border-amber-500'
-                            : 'border-zinc-300 dark:border-zinc-700'
-                        }`}
-                      />
-                      {invalid && (
-                        <span className="text-[11px] text-amber-700 dark:text-amber-500">
-                          Not applied — must be an internal #nav/… route.
-                        </span>
-                      )}
-                    </label>
-                  );
-                })}
-              </section>
             </>
           )}
         </div>
@@ -469,7 +342,7 @@ export function HomepageBuilder() {
                 <button
                   type="button"
                   onClick={handleCopy}
-                  className="shrink-0 rounded-md border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-900"
+                  className="shrink-0 cursor-pointer rounded-md border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-900"
                 >
                   {copied ? 'Copied' : 'Copy HTML'}
                 </button>
@@ -516,18 +389,29 @@ export function HomepageBuilder() {
                 <p className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
                   Next steps
                 </p>
+                {/* The only place the hand-off is described. The logo section
+                    deliberately does not repeat it. */}
                 <ol className="mt-1.5 list-decimal space-y-1 pl-5 text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
                   <li>
                     Copy the HTML and paste it into a new OvalEdge Data Story.
                   </li>
                   <li>
-                    Replace{' '}
+                    {brandInfo?.logo
+                      ? 'Download the logo above and upload it in the OvalEdge editor.'
+                      : 'Source the company logo yourself — none was found on the site — and upload it in the OvalEdge editor.'}
+                  </li>
+                  <li>
+                    In the pasted HTML, find{' '}
                     {/* Imported from the template, never retyped, so the string
                         shown here cannot drift from the one in the HTML. */}
                     <code className="rounded bg-zinc-100 px-1 py-0.5 font-mono text-[11px] break-all text-zinc-800 dark:bg-zinc-800 dark:text-zinc-200">
                       {LOGO_PLACEHOLDER_SRC}
                     </code>{' '}
-                    with the logo provided above.
+                    and replace it with the{' '}
+                    <code className="rounded bg-zinc-100 px-1 py-0.5 font-mono text-[11px] text-zinc-800 dark:bg-zinc-800 dark:text-zinc-200">
+                      ovaledgeimages/editorimage/&lt;uuid&gt;
+                    </code>{' '}
+                    path the upload returns.
                   </li>
                   <li>Publish the Data Story as a homepage widget.</li>
                 </ol>
@@ -548,7 +432,6 @@ export function HomepageBuilder() {
         publishing={publishing}
         publishResult={publishResult}
         onUpdateTerm={updateTerm}
-        onSelectHero={selectHeroMetric}
         onPublish={handlePublish}
       />}
     </div>
@@ -574,9 +457,8 @@ function logoFilename(contentType: string): string {
  * The logo, when the site had one.
  *
  * Always rendered, including the empty case — a section that vanishes when
- * nothing was found leaves the SE wondering whether it was tried. Upload stays
- * manual (see docs/KNOWN-ISSUES.md), so the instruction has to name the exact
- * placeholder string to search for in the pasted HTML.
+ * nothing was found leaves the SE wondering whether it was tried. What to *do*
+ * with it lives in the Next steps block under the preview, so it is stated once.
  */
 function LogoSection({ logo }: { logo?: LogoAsset }) {
   return (
@@ -610,33 +492,68 @@ function LogoSection({ logo }: { logo?: LogoAsset }) {
           <a
             href={logo.dataUri}
             download={logoFilename(logo.contentType)}
-            className="rounded-md border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-900"
+            className="cursor-pointer rounded-md border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-900"
           >
             Download
           </a>
         </div>
       )}
 
-      <ol className="list-decimal space-y-1 pl-5 text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
-        {logo ? (
-          <li>Download the logo above.</li>
-        ) : (
-          <li>Get the company logo yourself — the site did not expose one.</li>
-        )}
-        <li>Upload it in the OvalEdge homepage editor.</li>
-        <li>
-          In the HTML you pasted, find the placeholder{' '}
-          <code className="rounded bg-zinc-100 px-1 py-0.5 font-mono text-[11px] break-all text-zinc-800 dark:bg-zinc-800 dark:text-zinc-200">
-            {LOGO_PLACEHOLDER_SRC}
-          </code>{' '}
-          and replace it with the{' '}
-          <code className="rounded bg-zinc-100 px-1 py-0.5 font-mono text-[11px] text-zinc-800 dark:bg-zinc-800 dark:text-zinc-200">
-            ovaledgeimages/editorimage/&lt;uuid&gt;
-          </code>{' '}
-          path the upload returns.
-        </li>
-      </ol>
     </section>
+  );
+}
+
+/**
+ * What to do after publishing: link the hero metric to its components by hand.
+ *
+ * `/businessglossary/term/related/add` is authenticated by browser session, not
+ * by our JWT — it answers a token with an HTML login page — so this cannot be
+ * automated from here. See docs/KNOWN-ISSUES.md. The termIds are listed beside
+ * every name because finding a term by name in the OvalEdge UI is the slow part.
+ */
+function TermLinkInstructions({
+  hero,
+  created,
+}: {
+  hero: GlossaryTerm;
+  created: CreatedTerm[];
+}) {
+  const idByName = new Map(
+    created.map((term) => [term.termName.trim().toLowerCase(), term.termId]),
+  );
+  const idOf = (name: string) => idByName.get(name.trim().toLowerCase());
+
+  const heroId = idOf(hero.termName);
+  const links = (hero.componentTerms ?? []).map((name) => ({
+    name,
+    id: idOf(name),
+  }));
+
+  const label = (name: string, id?: number) =>
+    id === undefined ? `${name} (id not returned)` : `${name} (${id})`;
+
+  return (
+    <div className="mb-4 rounded-md border border-amber-400 bg-amber-50 p-4 dark:border-amber-700 dark:bg-amber-950/40">
+      <p className="text-sm font-medium text-amber-900 dark:text-amber-200">
+        One manual step: link the hero metric to its components
+      </p>
+      <p className="mt-1 text-xs text-amber-900 dark:text-amber-300">
+        OvalEdge&rsquo;s term-relationship endpoint is authenticated by browser
+        session rather than by an API token, so this app cannot create these
+        links. Add them by hand in the OvalEdge UI — the ids are listed so the
+        terms are quick to find.
+      </p>
+      <ul className="mt-3 space-y-1">
+        {links.map((link) => (
+          <li
+            key={link.name}
+            className="font-mono text-xs text-amber-900 dark:text-amber-200"
+          >
+            {label(hero.termName, heroId)} &rarr; {label(link.name, link.id)}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -645,7 +562,6 @@ interface GlossarySectionProps {
   publishing: boolean;
   publishResult: PublishResponse | null;
   onUpdateTerm: (index: number, patch: Partial<GlossaryTerm>) => void;
-  onSelectHero: (index: number) => void;
   onPublish: () => void;
 }
 
@@ -654,16 +570,27 @@ function GlossarySection({
   publishing,
   publishResult,
   onUpdateTerm,
-  onSelectHero,
   onPublish,
 }: GlossarySectionProps) {
   const hero = terms.find((term) => term.isHeroMetric);
+  const componentNames = new Set(
+    (hero?.componentTerms ?? []).map((name) => name.trim().toLowerCase()),
+  );
+  const isComponent = (term: GlossaryTerm) =>
+    !term.isHeroMetric && componentNames.has(term.termName.trim().toLowerCase());
+
   /**
-   * The schema requires the hero metric to carry a formula, so moving the flag
-   * to a plain term makes the publish fail server-side. Say so up front rather
-   * than letting the user find out by clicking.
+   * The cross-reference the schema enforces, checked here too. Renaming a term
+   * the hero metric depends on is an easy edit to make and breaks the publish
+   * server-side, so say so before the click rather than after it.
    */
-  const heroMissingFormula = Boolean(hero && !hero.formula?.trim());
+  const definedNames = new Set(
+    terms.filter((t) => !t.isHeroMetric).map((t) => t.termName.trim().toLowerCase()),
+  );
+  const brokenComponents = (hero?.componentTerms ?? []).filter(
+    (name) => !definedNames.has(name.trim().toLowerCase()),
+  );
+
   const published = publishResult?.ok === true;
 
   return (
@@ -682,7 +609,7 @@ function GlossarySection({
           type="button"
           onClick={onPublish}
           disabled={publishing || published}
-          className="rounded-md bg-zinc-900 px-4 py-2.5 text-sm font-medium text-white disabled:opacity-40 dark:bg-zinc-100 dark:text-zinc-900"
+          className="cursor-pointer rounded-md bg-zinc-900 px-4 py-2.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-40 dark:bg-zinc-100 dark:text-zinc-900"
         >
           {published
             ? 'Published'
@@ -692,11 +619,12 @@ function GlossarySection({
         </button>
       </div>
 
-      {heroMissingFormula && (
+      {brokenComponents.length > 0 && (
         <p className="mb-4 rounded-md border border-amber-400 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200">
-          The selected hero metric has no formula, so publishing will be
-          rejected. Pick the term that was generated as the hero metric, or add
-          a formula to this one.
+          The hero metric is derived from{' '}
+          {brokenComponents.map((n) => `"${n}"`).join(' and ')}, which no longer
+          match a term in this glossary. Publishing will be rejected until the
+          names line up again.
         </p>
       )}
 
@@ -737,14 +665,46 @@ function GlossarySection({
         </div>
       )}
 
+      {publishResult?.ok && hero && (hero.componentTerms?.length ?? 0) > 0 && (
+        <TermLinkInstructions
+          hero={hero}
+          created={publishResult.created}
+        />
+      )}
+
+      {hero && (
+        <div className="mb-5 rounded-md border border-zinc-300 p-4 dark:border-zinc-700">
+          <p className="text-[11px] font-medium tracking-wide text-zinc-500 uppercase">
+            Hero metric
+          </p>
+          <p className="mt-1 text-base font-semibold text-zinc-900 dark:text-zinc-50">
+            {hero.termName}
+          </p>
+          {hero.formula && (
+            <p className="mt-2 rounded bg-zinc-100 px-2 py-1.5 font-mono text-xs text-zinc-800 dark:bg-zinc-800 dark:text-zinc-200">
+              {hero.formula}
+            </p>
+          )}
+          <p className="mt-2 text-xs text-zinc-600 dark:text-zinc-400">
+            Derived from{' '}
+            {(hero.componentTerms ?? []).map((name, i, all) => (
+              <span key={name}>
+                <span className="font-medium text-zinc-900 dark:text-zinc-100">
+                  {name}
+                </span>
+                {i < all.length - 2 ? ', ' : i === all.length - 2 ? ' and ' : ''}
+              </span>
+            ))}
+            , each defined as its own term below.
+          </p>
+        </div>
+      )}
+
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[48rem] border-collapse text-left">
+        <table className="w-full min-w-[44rem] border-collapse text-left">
           <thead>
             <tr className="border-b border-zinc-300 dark:border-zinc-700">
-              <th className="w-20 px-2 py-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                Hero
-              </th>
-              <th className="w-64 px-2 py-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
+              <th className="w-72 px-2 py-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
                 Term
               </th>
               <th className="px-2 py-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
@@ -760,17 +720,6 @@ function GlossarySection({
               >
                 <td className="px-2 py-2">
                   <input
-                    type="radio"
-                    name="hero-metric"
-                    checked={term.isHeroMetric}
-                    onChange={() => onSelectHero(index)}
-                    disabled={published}
-                    aria-label={`Make ${term.termName} the hero metric`}
-                    className="mt-2 h-4 w-4 cursor-pointer"
-                  />
-                </td>
-                <td className="px-2 py-2">
-                  <input
                     value={term.termName}
                     onChange={(e) =>
                       onUpdateTerm(index, { termName: e.target.value })
@@ -778,6 +727,19 @@ function GlossarySection({
                     disabled={published}
                     className="w-full rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-sm text-zinc-900 outline-none focus:border-zinc-500 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
                   />
+                  {(term.isHeroMetric || isComponent(term)) && (
+                    <span
+                      className={`mt-1 inline-block rounded px-1.5 py-0.5 text-[11px] font-medium ${
+                        term.isHeroMetric
+                          ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900'
+                          : 'bg-zinc-200 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300'
+                      }`}
+                    >
+                      {term.isHeroMetric
+                        ? 'Hero metric'
+                        : `Component of ${hero?.termName ?? 'the hero metric'}`}
+                    </span>
+                  )}
                 </td>
                 <td className="px-2 py-2">
                   <textarea

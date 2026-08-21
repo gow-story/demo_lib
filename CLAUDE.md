@@ -1,4 +1,4 @@
-# Demo Lib
+# Demo Kit
 
 Turns discovery-call notes into an OvalEdge-ready demo homepage and business glossary.
 

@@ -95,11 +95,10 @@ function renderCards(
   brand: Brand,
 ): string {
   const cells = cards.map((card) => {
+    // Card titles are plain text. Tag page links are added by hand in the
+    // OvalEdge editor, so the template never emits an anchor here.
     const titleStyle = `font-family:${HEAVY} font-size:17px; color:${brand.primary}; line-height:1.3;`;
-    // A card without a tag page is plain text, never an anchor with nowhere to go.
-    const title = card.tagHref
-      ? `<a href="${escapeHtml(card.tagHref)}" style="${titleStyle}">${escapeHtml(card.title)}</a>`
-      : `<span style="${titleStyle}">${escapeHtml(card.title)}</span>`;
+    const title = `<span style="${titleStyle}">${escapeHtml(card.title)}</span>`;
 
     return [
       '      <td style="width:33.33%; vertical-align:top; padding:0 8px;">',

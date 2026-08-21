@@ -7,20 +7,12 @@ See [KNOWN-ISSUES.md](KNOWN-ISSUES.md) for the constraints several of these run 
 
 ---
 
-## 1. Hero metric as a derived metric with component terms
+## 1. Loading experience for the ~60s generation
 
-Today the hero metric's formula, components, mistakes and practices are text that merges
-into one `detailDescription` at the API boundary. The components should instead be real
-glossary terms in their own right, with the hero metric related to them — so the demo can
-walk from the metric down into its inputs.
-
-Blocked on term relationships, which cannot be created through the API — see
-[KNOWN-ISSUES.md](KNOWN-ISSUES.md). Until that changes, the components exist as prose and
-the SE links them by hand. Worth deciding whether to generate the component terms as
-separate glossary entries anyway, so the manual linking is a few clicks rather than
-authoring.
-
-## 2. Loading experience for the ~60s generation
+Partly done — the wait now shows real stages and a rotating observation. What remains is
+the retry: when generation needs a second attempt the user waits through another model
+call with no sign of it, because mid-flight phases would need a streamed server action.
+See the changelog entry on the progress UI.
 
 Generation takes 40–110s depending on whether web search runs. The UI currently shows a
 static "Searching and generating…" and nothing else, which reads as a hang.
@@ -30,7 +22,7 @@ staged progress indicator driven by what the server action is actually doing (br
 extraction finishes in about a second and could report early). Streaming changes the
 validate-retry loop, so it is not a free swap.
 
-## 3. Tighter copy
+## 2. Tighter copy
 
 Cards and purpose paragraphs still run long even under the 250-character cap. The cap
 stopped the worst of it but the copy is still wordier than a slide deserves.
@@ -39,7 +31,7 @@ Two levers, both cheap to try: lower `output_config.effort` from `high`, and tig
 length caps further. Output tokens are now ~88% of generation cost, so this is also the
 main remaining cost lever — measure both together.
 
-## 4. HubSpot integration
+## 3. HubSpot integration
 
 Pull discovery context from a deal rather than a paste. The pipeline is already shaped
 for it: `DiscoverySource` is a discriminated union with a `hubspot` variant commented in
@@ -48,7 +40,7 @@ callers.
 
 Work is the adapter and the auth, not the pipeline.
 
-## 5. Multi-user access and deployment to Render
+## 4. Multi-user access and deployment to Render
 
 Currently single-user and local. Deployment raises two things the app does not handle:
 
@@ -59,7 +51,7 @@ Currently single-user and local. Deployment raises two things the app does not h
 - The JWT cache is module-scoped and per-instance, which is fine for one process but
   becomes per-user state that must not be shared once there are several.
 
-## 6. Logo upload automation
+## 5. Logo upload automation
 
 The generated HTML ships an `<img>` with a marked placeholder src that the SE replaces by
 hand after uploading. Automating it means driving `setWikiImage`, which needs a CSRF

@@ -135,7 +135,7 @@ export function GenerationProgress({ stages }: { stages: Stage[] }) {
 
   return (
     <div className="flex h-[70vh] flex-col items-center justify-center rounded-md border border-dashed border-zinc-300 px-8 dark:border-zinc-700">
-      <div className="w-full max-w-md">
+      <div className="w-full max-w-lg">
         {/*
           The live region sits on the stage list, which is the part carrying
           real information and changes about three times per run. The
@@ -153,14 +153,15 @@ export function GenerationProgress({ stages }: { stages: Stage[] }) {
 
         <div className="mt-8 border-t border-zinc-200 pt-6 dark:border-zinc-800">
           {/*
-            Static header. The trailing dots do the work the rotating status
-            line used to — they read as something still running — and framing
-            the line below as an observation is what makes it land.
+            The header is static; its trailing dots read as something still
+            running. It stays a quiet label because the observation below is
+            what carries this panel — that line is the most engaging thing on
+            screen for a minute, so it gets the size and the weight.
           */}
-          <p className="font-mono text-sm text-zinc-700 dark:text-zinc-300">
+          <p className="font-mono text-sm text-zinc-500 dark:text-zinc-500">
             Meanwhile, in data governance…
           </p>
-          <p className="mt-3 text-xs leading-relaxed text-zinc-500 dark:text-zinc-500">
+          <p className="mt-4 text-lg leading-snug font-medium text-zinc-800 dark:text-zinc-200">
             {observation}
           </p>
         </div>

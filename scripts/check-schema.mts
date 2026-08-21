@@ -86,12 +86,6 @@ const rejectionCases: Array<{ name: string; mutate: (pkg: DemoPackage) => void }
     },
   },
   {
-    name: 'external card tagHref',
-    mutate: (pkg) => {
-      pkg.homepage.cards[0].tagHref = 'https://ovaledge.com/tags/1143';
-    },
-  },
-  {
     name: 'unknown quick access destination',
     mutate: (pkg) => {
       (pkg.homepage.quickAccessLinks as string[]).push('dashboards');
@@ -120,6 +114,71 @@ const rejectionCases: Array<{ name: string; mutate: (pkg: DemoPackage) => void }
     mutate: (pkg) => {
       const hero = pkg.glossary.terms.find((t) => t.isHeroMetric)!;
       delete hero.formula;
+    },
+  },
+  {
+    name: 'component naming a term that is not in the glossary',
+    mutate: (pkg) => {
+      const hero = pkg.glossary.terms.find((t) => t.isHeroMetric)!;
+      hero.componentTerms = ['Freight Revenue', 'Phantom Surcharge'];
+    },
+  },
+  {
+    name: 'only one component term',
+    mutate: (pkg) => {
+      const hero = pkg.glossary.terms.find((t) => t.isHeroMetric)!;
+      hero.componentTerms = ['Freight Revenue'];
+    },
+  },
+  {
+    name: 'four component terms',
+    mutate: (pkg) => {
+      const hero = pkg.glossary.terms.find((t) => t.isHeroMetric)!;
+      hero.componentTerms = ['Freight Revenue', 'Freight Cost', 'Lane', 'Active Customer'];
+    },
+  },
+  {
+    name: 'component term repeated',
+    mutate: (pkg) => {
+      const hero = pkg.glossary.terms.find((t) => t.isHeroMetric)!;
+      hero.componentTerms = ['Freight Revenue', 'Freight Revenue'];
+    },
+  },
+  {
+    name: 'hero metric listing itself as a component',
+    mutate: (pkg) => {
+      const hero = pkg.glossary.terms.find((t) => t.isHeroMetric)!;
+      hero.componentTerms = ['Freight Revenue', hero.termName];
+    },
+  },
+  {
+    name: 'a non-hero term carrying componentTerms',
+    mutate: (pkg) => {
+      const plain = pkg.glossary.terms.find((t) => !t.isHeroMetric)!;
+      plain.componentTerms = ['Lane', 'Active Customer'];
+    },
+  },
+  {
+    name: 'formula that does not name a component term',
+    mutate: (pkg) => {
+      const hero = pkg.glossary.terms.find((t) => t.isHeroMetric)!;
+      hero.formula = 'Freight Margin = Freight Revenue - operating outlay';
+    },
+  },
+  {
+    name: 'hero metric with no componentTerms at all',
+    mutate: (pkg) => {
+      const hero = pkg.glossary.terms.find((t) => t.isHeroMetric)!;
+      delete hero.componentTerms;
+    },
+  },
+  {
+    name: 'renaming a term the hero metric depends on',
+    mutate: (pkg) => {
+      const component = pkg.glossary.terms.find(
+        (t) => t.termName === 'Freight Revenue',
+      )!;
+      component.termName = 'Gross Freight Billings';
     },
   },
   {
@@ -185,18 +244,6 @@ for (const { name, mutate } of rejectionCases) {
   } else {
     console.log(`PASS  "${name}" rejected: ${parsed.error.issues[0].message}`);
   }
-}
-
-// A tag page route carries a query string — it must survive validation intact.
-const withTagHref: DemoPackage = structuredClone(sampleDemoPackage);
-withTagHref.homepage.cards[2].tagHref =
-  '#nav/tagsview?browse=tiles&id=1151&objectType=oetag&masterTagId=1063';
-const tagHrefCheck = DemoPackageSchema.safeParse(withTagHref);
-if (tagHrefCheck.success) {
-  console.log('PASS  "#nav route with a query string" accepted');
-} else {
-  failures++;
-  console.log(`FAIL  tagHref with query string rejected: ${tagHrefCheck.error.issues[0].message}`);
 }
 
 // Naming a system is allowed — only claiming a capability about it is not. This

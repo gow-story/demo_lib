@@ -19,8 +19,11 @@ This is not the same auth model as `/api/term/addTerm/v2`, which is JWT-authenti
 works fine. Do not assume an endpoint takes a JWT because a neighbouring one does.
 
 **Current behaviour:** the SE links related terms by hand in the OvalEdge UI after
-publishing. This is what blocks the derived-hero-metric work in
-[ROADMAP.md](ROADMAP.md).
+publishing. The app makes that as cheap as it can: the hero metric is generated as a
+derived metric whose components are terms in the same glossary, and after a successful
+publish the UI lists the exact links to create — `Fuel Margin (1234) → Fuel Revenue (1235)`
+— with the created termIds beside each name, since finding a term by name in the OvalEdge
+UI is the slow part.
 
 ## Domains and categories cannot be created via the API — only referenced
 

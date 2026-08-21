@@ -1,9 +1,9 @@
-# Demo Lib
+# Demo Kit
 
 Turns discovery-call notes into a demo homepage and business glossary for a prospect's
 OvalEdge tenant.
 
-Paste in the prospect's website and your notes from the call. Demo Lib generates the
+Paste in the prospect's website and your notes from the call. Demo Kit generates the
 homepage copy and a 6–8 term glossary, extracts the prospect's brand colors and logo from
 their site, renders HTML that survives the OvalEdge editor, and publishes the glossary
 terms to your tenant. You copy the HTML into the homepage editor yourself; nothing is
