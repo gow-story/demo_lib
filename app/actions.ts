@@ -6,7 +6,7 @@ import { generatePackage } from '@/src/lib/generate-package';
 import { addTerms, demoDomain, type CreatedTerm } from '@/src/lib/ovaledge/client';
 import { toOvalEdgeTerms } from '@/src/lib/ovaledge/map-terms';
 import { logUsage } from '@/src/lib/usage';
-import { GlossarySchema, type DemoPackage } from '@/src/lib/schema';
+import { GlossarySchema, type Brand, type DemoPackage } from '@/src/lib/schema';
 
 /**
  * The only place the Anthropic API is reached from. Everything it imports is
@@ -20,21 +20,55 @@ export interface GenerateRequest {
   discovery: DiscoverySource;
 }
 
-export type GenerateResponse =
+export interface BrandResponse {
+  brand: Brand;
+  origin: BrandOrigin;
+  note: string;
+}
+
+export type ContentResponse =
   | {
       ok: true;
       pkg: DemoPackage;
-      brandOrigin: BrandOrigin;
-      brandNote: string;
       attempts: number;
       /** USD for this generation, so the number is visible in the UI too. */
       costUsd: number;
     }
   | { ok: false; message: string; issues: string[]; rawOutput?: string };
 
-export async function generateDemoPackage(
+/**
+ * Brand extraction, as its own action.
+ *
+ * Split from content generation so the browser can show it finishing — it takes
+ * about a second against a live site, while generation runs for a minute, and
+ * collapsing them into one call made the fast half invisible. The client fires
+ * both in parallel, so nothing waits on anything it did not before.
+ *
+ * Makes no Anthropic call: the palette is scraped from the company's site.
+ */
+export async function extractBrand(
+  companyName: string,
+  domain?: string,
+): Promise<BrandResponse> {
+  // resolveBrand never rejects — colour lookup must never block generation.
+  const resolution = await resolveBrand(companyName.trim(), domain);
+  return {
+    brand: resolution.brand,
+    origin: resolution.origin,
+    note: resolution.note,
+  };
+}
+
+/**
+ * The homepage and glossary, from one Anthropic call.
+ *
+ * Returns the package carrying a stand-in palette; the caller swaps in whatever
+ * `extractBrand` resolved. Content does not depend on the colours, which is what
+ * lets the two run independently.
+ */
+export async function generateContent(
   request: GenerateRequest,
-): Promise<GenerateResponse> {
+): Promise<ContentResponse> {
   const companyName = request.companyName.trim();
   if (!companyName) {
     return { ok: false, message: 'Company name is required.', issues: [] };
@@ -42,16 +76,11 @@ export async function generateDemoPackage(
 
   try {
     const discovery = await resolveDiscovery(request.discovery);
-
-    // Brand lookup and content generation are independent, so they run
-    // together — and resolveBrand never rejects, so a failed color lookup can
-    // never take the generation down with it.
-    const [brandResolution, content] = await Promise.all([
-      resolveBrand(companyName, request.domain),
-      // No brand passed: content does not depend on the palette, and the
-      // resolved one is swapped in below.
-      generatePackage({ companyName, domain: request.domain, discovery }),
-    ]);
+    const content = await generatePackage({
+      companyName,
+      domain: request.domain,
+      discovery,
+    });
 
     // Logged on every path, including failures — a rejected generation still
     // spent tokens, and those are exactly the ones worth noticing.
@@ -69,12 +98,7 @@ export async function generateDemoPackage(
 
     return {
       ok: true,
-      pkg: {
-        ...content.pkg,
-        prospect: { ...content.pkg.prospect, brand: brandResolution.brand },
-      },
-      brandOrigin: brandResolution.origin,
-      brandNote: brandResolution.note,
+      pkg: content.pkg,
       attempts: content.attempts,
       costUsd: cost.total,
     };

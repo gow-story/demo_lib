@@ -3,11 +3,13 @@
 import { useMemo, useState } from 'react';
 
 import {
-  generateDemoPackage,
+  extractBrand,
+  generateContent,
   publishGlossary,
-  type GenerateResponse,
+  type ContentResponse,
   type PublishResponse,
 } from '../actions';
+import { GenerationProgress, type Stage, type StageState } from './generation-progress';
 import { NAV_HREF } from '@/src/lib/nav-href';
 import { buildDetailDescription } from '@/src/lib/ovaledge/map-terms';
 import type { Brand, DemoPackage, GlossaryTerm } from '@/src/lib/schema';
@@ -37,13 +39,30 @@ const BRAND_ORIGIN_LABEL: Record<string, string> = {
 
 const EMPTY_TAG_HREFS = ['', '', ''];
 
+/**
+ * The three stages the browser can genuinely observe. Brand extraction and
+ * content generation each settle when their server action returns; the HTML
+ * check runs here, in this component. Nothing is on a timer — if a stage looks
+ * stuck, it is stuck.
+ */
+const INITIAL_STAGES: Stage[] = [
+  { id: 'brand', label: 'Extracting brand colours', state: 'pending' },
+  { id: 'content', label: 'Writing homepage and glossary', state: 'pending' },
+  { id: 'html', label: 'Checking HTML against the Froala rules', state: 'pending' },
+];
+
 export function HomepageBuilder() {
   const [companyName, setCompanyName] = useState('');
   const [domain, setDomain] = useState('');
   const [notes, setNotes] = useState('');
 
   const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<GenerateResponse | null>(null);
+  const [stages, setStages] = useState<Stage[]>(INITIAL_STAGES);
+  const [result, setResult] = useState<ContentResponse | null>(null);
+  const [brandInfo, setBrandInfo] = useState<{
+    origin: string;
+    note: string;
+  } | null>(null);
   const [pkg, setPkg] = useState<DemoPackage | null>(null);
   const [tagHrefs, setTagHrefs] = useState<string[]>(EMPTY_TAG_HREFS);
   const [copied, setCopied] = useState(false);
@@ -75,26 +94,84 @@ export function HomepageBuilder() {
     return { html, validation: validateFroalaHtml(html) };
   }, [pkg, tagHrefs]);
 
+  function markStage(id: string, state: StageState, detail?: string) {
+    setStages((current) =>
+      current.map((stage) =>
+        stage.id === id ? { ...stage, state, detail } : stage,
+      ),
+    );
+  }
+
   async function handleGenerate(event: React.FormEvent) {
     event.preventDefault();
     if (!companyName.trim() || busy) return;
 
     setBusy(true);
     setResult(null);
+    setBrandInfo(null);
     setPkg(null);
     setTagHrefs(EMPTY_TAG_HREFS);
     setPublishResult(null);
+    setStages(
+      INITIAL_STAGES.map((stage) =>
+        stage.id === 'brand' || stage.id === 'content'
+          ? { ...stage, state: 'active' }
+          : stage,
+      ),
+    );
 
-    const response = await generateDemoPackage({
+    const trimmedDomain = domain.trim() || undefined;
+
+    // Both start now. Brand extraction usually settles within a second or two,
+    // and the stage list shows it the moment it does rather than holding the
+    // result hostage to the minute-long half.
+    const brandPromise = extractBrand(companyName, trimmedDomain).then(
+      (brand) => {
+        markStage('brand', 'done', brand.note);
+        setBrandInfo({ origin: brand.origin, note: brand.note });
+        return brand;
+      },
+    );
+
+    const contentPromise = generateContent({
       companyName,
-      domain: domain.trim() || undefined,
-      discovery: notes.trim()
-        ? { kind: 'notes', text: notes }
-        : { kind: 'none' },
+      domain: trimmedDomain,
+      discovery: notes.trim() ? { kind: 'notes', text: notes } : { kind: 'none' },
+    }).then((response) => {
+      markStage(
+        'content',
+        response.ok ? 'done' : 'failed',
+        response.ok
+          ? `accepted on attempt ${response.attempts} · $${response.costUsd.toFixed(3)}`
+          : 'rejected by the validator twice',
+      );
+      return response;
     });
 
+    const [brand, response] = await Promise.all([brandPromise, contentPromise]);
+
     setResult(response);
-    if (response.ok) setPkg(response.pkg);
+    if (response.ok) {
+      const merged: DemoPackage = {
+        ...response.pkg,
+        prospect: { ...response.pkg.prospect, brand: brand.brand },
+      };
+
+      // Real work, done here rather than inferred: render the template and run
+      // the Froala checklist over the result. It is fast, so this stage reports
+      // an outcome rather than lingering — but the outcome is a genuine one.
+      markStage('html', 'active');
+      const validation = validateFroalaHtml(renderHomepage(merged));
+      markStage(
+        'html',
+        validation.ok ? 'done' : 'failed',
+        validation.ok
+          ? 'passes — safe to paste'
+          : `${validation.violations.length} violation(s)`,
+      );
+
+      setPkg(merged);
+    }
     setBusy(false);
   }
 
@@ -268,9 +345,9 @@ export function HomepageBuilder() {
                     </span>
                   </h2>
                   <p className="text-xs text-zinc-500">
-                    {BRAND_ORIGIN_LABEL[result.brandOrigin] ?? result.brandOrigin}
-                    {' — '}
-                    {result.brandNote}
+                    {brandInfo
+                      ? `${BRAND_ORIGIN_LABEL[brandInfo.origin] ?? brandInfo.origin} — ${brandInfo.note}`
+                      : 'Palette applied.'}
                   </p>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
@@ -394,11 +471,11 @@ export function HomepageBuilder() {
                 className="h-[70vh] w-full rounded-md border border-zinc-300 bg-white dark:border-zinc-700"
               />
             </>
+          ) : busy ? (
+            <GenerationProgress stages={stages} />
           ) : (
             <div className="flex h-[70vh] items-center justify-center rounded-md border border-dashed border-zinc-300 text-sm text-zinc-500 dark:border-zinc-700">
-              {busy
-                ? 'Searching the web and generating…'
-                : 'The preview appears here once you generate.'}
+              The preview appears here once you generate.
             </div>
           )}
         </div>

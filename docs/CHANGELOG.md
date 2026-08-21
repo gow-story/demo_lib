@@ -6,6 +6,47 @@ otherwise go in a long commit message lives — commit messages stay to one line
 
 ---
 
+## Generation progress UI
+
+Replaced the static loading text with a live stage list, rotating status lines, and a
+rotating joke. `app/_components/generation-progress.tsx`.
+
+- **The stage list reflects real work, not a timer.** The single generate action was
+  split into `extractBrand` and `generateContent`, fired in parallel from the client, so
+  the browser can show brand extraction finishing at ~1s instead of hiding it behind the
+  minute-long half. Each stage flips when its promise settles and carries the real
+  outcome — the palette note, the attempt count and cost, the Froala result.
+- **No percentage**, because there is no honest number to put in one. Nothing is on a
+  timer: if a stage looks stuck, it is stuck.
+- **The HTML check runs in the handler**, not inferred from a `useMemo`. It genuinely
+  renders the template and runs the validator at that point. It is fast, so it reports an
+  outcome rather than lingering — but the outcome is real.
+- **Streaming was considered and rejected.** True mid-flight phases (including the
+  schema-validation retry) would need a streamed server action; Next 16's bundled docs
+  don't document returning a stream or async iterable from one, and it could not be
+  verified in a browser here. Two parallel actions give genuinely live stages with no
+  framework uncertainty. If streaming is confirmed later, the retry becomes observable —
+  worth revisiting, since `attempts: 2` means the user waited through a second model call
+  with no sign of it.
+- **Below the stages: a static "Meanwhile, in data governance…" header over a rotating
+  observation**, every 10s. The header's trailing dots carry the sense of something still
+  running.
+- **Observations, not jokes.** The first pass wrote them as jokes and they read as failed
+  ones: the content was true and recognizable, but the punchline framing set up an
+  expectation the lines could not meet. Reframing them as dispatches from the job made
+  the specificity the payoff instead of a setup. Anything reaching for a joke structure —
+  borrowed formats, contradiction punchlines, repetition-for-effect — was dropped or
+  flattened. Adding one: make it specific and true rather than clever.
+- Observations rotate via a shuffled queue that never repeats until the pool is
+  exhausted. Selection happens in an effect, not during render — `Math.random()` in a
+  render body would be a hydration mismatch.
+- An earlier pass also rotated invented status gerunds ("Asking the warehouse nicely")
+  above the observation. Removed — two rotating elements competed, and the honest
+  progress was already in the stage list. The live region moved onto the stage list,
+  which is the part carrying real information and changes about three times per run.
+- No extra Anthropic calls: `extractBrand` scrapes the site, and generation is still one
+  model call producing both sections.
+
 ## JWT minting
 
 Replaced the pasted `OVALEDGE_JWT` with `OVALEDGE_USER_TOKEN` + `OVALEDGE_USER_SECRET`.
