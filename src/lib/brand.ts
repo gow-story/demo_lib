@@ -34,6 +34,8 @@ export interface BrandResolution {
   origin: BrandOrigin;
   /** One line explaining where the palette came from, shown in the UI. */
   note: string;
+  /** The company's logo, when one could be found. Always optional. */
+  logo?: LogoAsset;
 }
 
 const PAGE_TIMEOUT_MS = 8000;
@@ -110,24 +112,29 @@ function rankColors(text: string): string[] {
     .map(([hex]) => hex);
 }
 
+/**
+ * Public http(s) only. The domain arrives from a form field, and logo
+ * candidates come from markup on that page — neither should be able to point
+ * the server at its own network.
+ */
+function isPublicHttpUrl(url: URL): boolean {
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+  const host = url.hostname.toLowerCase();
+  return !(
+    host === 'localhost' ||
+    host.endsWith('.localhost') ||
+    /^\d+\.\d+\.\d+\.\d+$/.test(host) ||
+    host.endsWith('.internal') ||
+    host.endsWith('.local')
+  );
+}
+
 function toUrl(domain: string): URL | null {
   const trimmed = domain.trim();
   if (!trimmed) return null;
   try {
     const url = new URL(/^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`);
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
-    // The domain arrives from a form field — don't let it point at the host.
-    const host = url.hostname.toLowerCase();
-    if (
-      host === 'localhost' ||
-      host.endsWith('.localhost') ||
-      /^\d+\.\d+\.\d+\.\d+$/.test(host) ||
-      host.endsWith('.internal') ||
-      host.endsWith('.local')
-    ) {
-      return null;
-    }
-    return url;
+    return isPublicHttpUrl(url) ? url : null;
   } catch {
     return null;
   }
@@ -143,6 +150,179 @@ async function fetchText(url: URL, timeoutMs: number): Promise<string> {
     throw new Error(`${url.hostname} responded ${response.status}`);
   }
   return (await response.text()).slice(0, MAX_BYTES);
+}
+
+/* ------------------------------------------------------------------ *
+ * Logo discovery
+ *
+ * Best effort, and strictly optional: every failure path here returns
+ * null, and the palette — and the generation running alongside it — is
+ * unaffected either way.
+ * ------------------------------------------------------------------ */
+
+/**
+ * Where a candidate came from, in search order, best first.
+ *
+ * `og:image` is last on purpose. It is usually a social share card sized for a
+ * link preview rather than a mark — stripe.com returns a 305 KB JPEG banner —
+ * and the template puts this in a 190px slot. The touch icon and the favicon
+ * are almost always the actual logo, so they go first even though they are
+ * smaller. Reordering this array is all it takes to change the priority.
+ */
+const LOGO_SOURCES = ['apple-touch-icon', 'favicon', 'og:image'] as const;
+export type LogoSource = (typeof LOGO_SOURCES)[number];
+
+export interface LogoAsset {
+  /**
+   * The image inlined as a data: URI. Fetched server-side rather than handed
+   * to the browser as a URL so that it renders without a cross-origin request,
+   * and so `<a download>` actually downloads instead of navigating — the
+   * download attribute is ignored on cross-origin hrefs.
+   */
+  dataUri: string;
+  /** Where it came from, for the "is this really the logo?" question. */
+  sourceUrl: string;
+  contentType: string;
+  bytes: number;
+  from: LogoSource;
+}
+
+interface LogoCandidate {
+  url: URL;
+  from: LogoSource;
+  /** Lower is better. */
+  sourceRank: number;
+  formatRank: number;
+  /** Largest declared dimension, 0 when unknown. */
+  size: number;
+}
+
+const LOGO_TIMEOUT_MS = 5000;
+const MAX_LOGO_ATTEMPTS = 4;
+/** Base64 inflates by a third, and this rides in a server action response. */
+const MAX_LOGO_BYTES = 512_000;
+
+/** SVG and PNG first, ICO last. */
+function formatRank(url: URL): number {
+  const path = url.pathname.toLowerCase();
+  if (path.endsWith('.svg')) return 0;
+  if (path.endsWith('.png')) return 1;
+  if (path.endsWith('.webp')) return 2;
+  if (path.endsWith('.ico')) return 5;
+  if (path.endsWith('.gif')) return 4;
+  if (path.endsWith('.jpg') || path.endsWith('.jpeg')) return 3;
+  return 3;
+}
+
+function attr(tag: string, name: string): string | undefined {
+  return new RegExp(`${name}\\s*=\\s*["']([^"']*)["']`, 'i').exec(tag)?.[1];
+}
+
+/** Largest edge from a `sizes` attribute; "any" (usually SVG) sorts high. */
+function declaredSize(tag: string): number {
+  const sizes = attr(tag, 'sizes');
+  if (!sizes) return 0;
+  if (/any/i.test(sizes)) return 1024;
+  return Math.max(0, ...[...sizes.matchAll(/(\d+)/g)].map((m) => Number(m[1])));
+}
+
+function pushCandidate(
+  into: LogoCandidate[],
+  href: string | undefined,
+  base: URL,
+  from: LogoSource,
+  size: number,
+) {
+  if (!href?.trim()) return;
+  try {
+    const url = new URL(href.trim(), base);
+    if (!isPublicHttpUrl(url)) return;
+    into.push({
+      url,
+      from,
+      sourceRank: LOGO_SOURCES.indexOf(from),
+      formatRank: formatRank(url),
+      size,
+    });
+  } catch {
+    // Malformed href — skip it.
+  }
+}
+
+/**
+ * Candidates in the order they should be tried: by source first (see
+ * `LOGO_SOURCES`), and within a source by format and declared size.
+ */
+function logoCandidates(html: string, base: URL): LogoCandidate[] {
+  const candidates: LogoCandidate[] = [];
+
+  for (const match of html.matchAll(/<meta\b[^>]*>/gi)) {
+    const tag = match[0];
+    const key = (attr(tag, 'property') ?? attr(tag, 'name') ?? '').toLowerCase();
+    if (key === 'og:image' || key === 'og:image:url' || key === 'og:image:secure_url') {
+      pushCandidate(candidates, attr(tag, 'content'), base, 'og:image', 0);
+    }
+  }
+
+  for (const match of html.matchAll(/<link\b[^>]*>/gi)) {
+    const tag = match[0];
+    const rel = (attr(tag, 'rel') ?? '').toLowerCase();
+    if (!/\bicon\b/.test(rel)) continue;
+    const from: LogoSource = rel.includes('apple-touch-icon')
+      ? 'apple-touch-icon'
+      : 'favicon';
+    pushCandidate(candidates, attr(tag, 'href'), base, from, declaredSize(tag));
+  }
+
+  // Last resort: the conventional location, whether or not it is declared.
+  pushCandidate(candidates, '/favicon.ico', base, 'favicon', 0);
+
+  return candidates.sort(
+    (a, b) =>
+      a.sourceRank - b.sourceRank ||
+      a.formatRank - b.formatRank ||
+      b.size - a.size,
+  );
+}
+
+/** Fetches the first candidate that turns out to be a usable image. */
+async function fetchLogo(candidates: LogoCandidate[]): Promise<LogoAsset | null> {
+  const seen = new Set<string>();
+
+  for (const candidate of candidates) {
+    if (seen.size >= MAX_LOGO_ATTEMPTS) break;
+    const key = candidate.url.toString();
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    try {
+      const response = await fetch(candidate.url, {
+        headers: { 'user-agent': USER_AGENT, accept: 'image/*' },
+        signal: AbortSignal.timeout(LOGO_TIMEOUT_MS),
+        redirect: 'follow',
+      });
+      if (!response.ok) continue;
+
+      const contentType =
+        response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase() ?? '';
+      if (!contentType.startsWith('image/')) continue;
+
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      if (bytes.byteLength === 0 || bytes.byteLength > MAX_LOGO_BYTES) continue;
+
+      return {
+        dataUri: `data:${contentType};base64,${Buffer.from(bytes).toString('base64')}`,
+        sourceUrl: key,
+        contentType,
+        bytes: bytes.byteLength,
+        from: candidate.from,
+      };
+    } catch {
+      // Timeout, DNS failure, bad TLS — try the next candidate.
+    }
+  }
+
+  return null;
 }
 
 /** Same-origin stylesheets linked from the page, capped. */
@@ -233,11 +413,16 @@ export async function resolveBrand(
   try {
     const html = await fetchText(url, PAGE_TIMEOUT_MS);
 
-    const sheets = await Promise.all(
-      stylesheetUrls(html, url).map((sheet) =>
-        fetchText(sheet, STYLESHEET_TIMEOUT_MS).catch(() => ''),
+    // The logo is a bonus, never a dependency: its own catch, so a slow CDN or
+    // a 404 favicon cannot cost us the palette we already have.
+    const [sheets, logo] = await Promise.all([
+      Promise.all(
+        stylesheetUrls(html, url).map((sheet) =>
+          fetchText(sheet, STYLESHEET_TIMEOUT_MS).catch(() => ''),
+        ),
       ),
-    );
+      fetchLogo(logoCandidates(html, url)).catch(() => null),
+    ]);
 
     const ranked = rankColors([html, ...sheets].join('\n'));
     const { brand, filled } = assignRoles(ranked);
@@ -247,6 +432,7 @@ export async function resolveBrand(
         brand: NEUTRAL_BRAND,
         origin: 'fallback',
         note: `No usable hex colors found on ${url.hostname}; neutral palette applied.`,
+        logo: logo ?? undefined,
       };
     }
 
@@ -256,6 +442,7 @@ export async function resolveBrand(
       note: `${filled} of 4 roles filled from ${ranked.length} colors found on ${url.hostname}${
         filled < 4 ? '; the rest are neutral defaults' : ''
       }.`,
+      logo: logo ?? undefined,
     };
   } catch (error) {
     // Swallowed on purpose: a failed palette degrades branding, it does not

@@ -6,6 +6,84 @@ otherwise go in a long commit message lives — commit messages stay to one line
 
 ---
 
+## Website as the single required input
+
+The two fields — company name (required) and website (optional) — collapse into one
+required Website field. `src/lib/domain.ts`.
+
+- **The website is what actually grounds everything**: brand colours, the logo, and the
+  business-context lookup all key off the site. A free-text company name could not — "Acme"
+  is forty companies, acme.com is one — so requiring the domain removes a whole class of
+  wrong-company generation and narrows what the model has to search for.
+- **The company name is derived from the domain, then refined by the model.** The
+  derivation is deliberately a guess: `farmers.com` gives "Farmers" when the company is
+  Farmers Insurance, `johndeere.com` gives "Johndeere". The generation prompt is given the
+  derived name and told to correct it from the discovery notes or the site, and to leave it
+  alone otherwise. `prospect.name` stays in the schema — the hero title uses it.
+- **The model's name is sanitized, not trusted.** `pickCompanyName` falls back to the
+  derived name for anything empty, over 80 characters, multi-line, or containing markup, so
+  a bad correction cannot reach the hero title or cost a retry.
+- **Normalization and validation live in one dependency-free module** so the browser can
+  validate the field before submit and the server can re-validate on arrival without either
+  pulling in zod. Accepts what people paste — `https://farmers.com/`,
+  `www.farmers.com/about?utm=x` — and rejects bare words, IPs, and `localhost`.
+- The field shows what it resolved to (`farmers.com · company name read as "Farmers"`)
+  before a generation is spent, so a badly wrong derivation is visible early.
+- `GenerateRequest` is now `{ domain, discovery }`. The name is derived server-side in both
+  actions from the same pure function, so a client cannot send a name and domain that
+  disagree.
+
+## Cost shown prominently, and next steps under the preview
+
+The per-generation cost is its own bordered element reading "This generation cost $0.10",
+with the figure at 2xl. It is the number that decides whether this is viable across a
+team, so it is not a footnote. A run that needed two attempts says so.
+
+It sits **below** the preview rather than above it: the preview is what the SE came for,
+and the cost and the hand-off instructions both belong after it, in the order the work
+actually happens.
+
+Under the cost, three numbered steps for what to do with the HTML — paste into a new
+OvalEdge Data Story, replace the logo placeholder, publish as a homepage widget. The
+placeholder string is `LOGO_PLACEHOLDER_SRC` imported from the template rather than
+retyped, so what the instruction says to search for cannot drift from what the HTML
+contains. The logo section on the left names the same constant for the same reason; the
+two overlap on that one step by design, since the SE may arrive at it from either side.
+
+Failed runs report their cost too — `ContentResponse` carries `costUsd` on the failure
+branch. A generation rejected twice still spent tokens, and those are the ones most worth
+noticing.
+
+## Logo fetching
+
+`resolveBrand` now finds the company's logo alongside the palette, and the UI shows it
+with a download button and the instructions for getting it into OvalEdge.
+
+- **It rides on a fetch that already happened.** The site HTML was already being read for
+  colours; finding the logo costs one extra image request, not another page load.
+- **Search order is apple-touch-icon, favicon, og:image**, with SVG/PNG preferred over ICO
+  and larger preferred over smaller within a source. A conventional `/favicon.ico` is
+  always appended as a last resort, whether or not the page declares it.
+- **Fetched server-side and returned as a data URI**, not as a URL. Two reasons: the
+  preview renders with no cross-origin request, and `<a download>` actually downloads —
+  the `download` attribute is ignored on cross-origin hrefs. Capped at 512 KB.
+- **Never blocks anything.** Logo fetching has its own catch inside `resolveBrand`, so a
+  slow CDN or a 404 favicon cannot cost the palette that was already extracted, and
+  generation runs in parallel regardless.
+- **The empty case is shown, not hidden.** A section that disappears when nothing was
+  found leaves the SE wondering whether it was even tried.
+- The instruction names `LOGO_PLACEHOLDER_SRC` verbatim, imported from the template rather
+  than retyped, so the string in the UI cannot drift from the string in the HTML.
+- **`og:image` is last on purpose.** The first cut tried it first and stripe.com returned a
+  305 KB JPEG social share card — a banner, not a mark, and wrong for the template's 190px
+  slot. The touch icon and favicon are almost always the real logo, so they take priority
+  despite being smaller; with the order reversed Stripe resolves to a ~400 byte
+  `favicon.svg`. The UI still reports the matched source, type and size, so a bad match
+  stays visible. See [KNOWN-ISSUES.md](KNOWN-ISSUES.md).
+- Also moved the per-generation cost out of the "Brand colors" heading onto its own quiet
+  line under the preview. It describes the whole run, not the brand step, and that heading
+  now has a logo section under it.
+
 ## Generation progress UI
 
 Replaced the static loading text with a live stage list, rotating status lines, and a

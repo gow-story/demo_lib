@@ -36,6 +36,7 @@ const JSON_CONTRACT = `---
 Return ONLY a JSON object. No prose, no explanation, no code fence.
 
 {
+  "prospect": { "name": string },
   "homepage": {
     "cardPattern": "governance-focus" | "business-area",
     "hero": { "title": string, "tagline": string, "badge": string },
@@ -60,6 +61,17 @@ Return ONLY a JSON object. No prose, no explanation, no code fence.
     ]
   }
 }
+
+## The company name
+
+"prospect.name" is the company's name as it should appear on the page. You are
+given a name derived mechanically from the domain, which is often incomplete —
+"farmers.com" derives as "Farmers" when the company is Farmers Insurance, and
+"johndeere.com" derives as "Johndeere".
+
+Correct it when the discovery notes or the site make the real name clear. Return
+the derived name unchanged when they do not. Do NOT guess at a fuller name you
+have not actually seen, and do not append "Inc", "Ltd", or a tagline.
 
 Hard rules, each enforced by a validator that will reject your output:
 - Exactly 3 cards, with distinct titles. Title plus ONE short sentence each
@@ -97,8 +109,8 @@ Hard rules, each enforced by a validator that will reject your output:
 
 function buildTaskPrompt(input: GenerateHomepageInput): string {
   const lines = [
-    `Company: ${input.companyName}`,
-    input.domain?.trim() ? `Website: ${input.domain.trim()}` : null,
+    `Website: ${input.domain}`,
+    `Company name derived from the domain: ${input.companyName}`,
     '',
     'Use web search to read the company\'s own website for business context —',
     'what they do, which business areas they run, the terminology they use.',
@@ -156,11 +168,26 @@ const PLACEHOLDER_BRAND: Brand = {
 };
 
 export interface GenerateHomepageInput {
+  /** The derived name, used as a seed and as the fallback. */
   companyName: string;
-  domain?: string;
+  /** Normalized hostname. Required — it is what grounds the whole lookup. */
+  domain: string;
   discovery: ResolvedDiscovery;
   /** Optional — defaults to a stand-in the caller is expected to replace. */
   brand?: Brand;
+}
+
+/**
+ * The model may correct the derived company name, but it does not get to put
+ * arbitrary text in the hero title. Anything malformed falls back to the name
+ * derived from the domain, which is always safe.
+ */
+function pickCompanyName(fromModel: unknown, derived: string): string {
+  if (typeof fromModel !== 'string') return derived;
+  const candidate = fromModel.trim();
+  if (!candidate || candidate.length > 80) return derived;
+  if (candidate.includes('\n') || /<[^>]*>/.test(candidate)) return derived;
+  return candidate;
 }
 
 export type GenerateHomepageResult =
@@ -216,16 +243,18 @@ export async function generatePackage(
 
     try {
       const json = stripTagHrefs(extractJsonObject(rawOutput)) as {
+        prospect?: { name?: unknown };
         homepage?: unknown;
         glossary?: unknown;
       };
 
-      // `prospect` is ours; `homepage` and `glossary` come from the model, in
-      // one call — a second call would double the cached-prefix cost and let
-      // the two halves drift away from the same discovery context.
+      // `homepage`, `glossary`, and a possibly-corrected company name come from
+      // the model, in one call — a second call would double the cached-prefix
+      // cost and let the halves drift from the same discovery context. The
+      // palette is ours, and so is the last word on the name.
       const candidate = {
         prospect: {
-          name: input.companyName,
+          name: pickCompanyName(json.prospect?.name, input.companyName),
           brand: input.brand ?? PLACEHOLDER_BRAND,
         },
         homepage: json.homepage,

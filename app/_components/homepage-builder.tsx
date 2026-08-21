@@ -9,11 +9,13 @@ import {
   type ContentResponse,
   type PublishResponse,
 } from '../actions';
+import type { LogoAsset } from '@/src/lib/brand';
 import { GenerationProgress, type Stage, type StageState } from './generation-progress';
+import { companyNameFromDomain, normalizeDomain } from '@/src/lib/domain';
 import { NAV_HREF } from '@/src/lib/nav-href';
 import { buildDetailDescription } from '@/src/lib/ovaledge/map-terms';
 import type { Brand, DemoPackage, GlossaryTerm } from '@/src/lib/schema';
-import { renderHomepage } from '@/src/templates/homepage';
+import { LOGO_PLACEHOLDER_SRC, renderHomepage } from '@/src/templates/homepage';
 import { validateFroalaHtml } from '@/src/templates/validate';
 
 /**
@@ -52,9 +54,18 @@ const INITIAL_STAGES: Stage[] = [
 ];
 
 export function HomepageBuilder() {
-  const [companyName, setCompanyName] = useState('');
-  const [domain, setDomain] = useState('');
+  const [website, setWebsite] = useState('');
   const [notes, setNotes] = useState('');
+
+  /**
+   * What the website field resolves to. Shown under the field so the SE can see
+   * the derived name before spending a generation on it — the model may correct
+   * it, but a badly wrong derivation is worth catching early.
+   */
+  const resolvedSite = useMemo(() => {
+    const domain = normalizeDomain(website);
+    return domain ? { domain, companyName: companyNameFromDomain(domain) } : null;
+  }, [website]);
 
   const [busy, setBusy] = useState(false);
   const [stages, setStages] = useState<Stage[]>(INITIAL_STAGES);
@@ -62,6 +73,7 @@ export function HomepageBuilder() {
   const [brandInfo, setBrandInfo] = useState<{
     origin: string;
     note: string;
+    logo?: LogoAsset;
   } | null>(null);
   const [pkg, setPkg] = useState<DemoPackage | null>(null);
   const [tagHrefs, setTagHrefs] = useState<string[]>(EMPTY_TAG_HREFS);
@@ -104,7 +116,7 @@ export function HomepageBuilder() {
 
   async function handleGenerate(event: React.FormEvent) {
     event.preventDefault();
-    if (!companyName.trim() || busy) return;
+    if (!resolvedSite || busy) return;
 
     setBusy(true);
     setResult(null);
@@ -120,22 +132,19 @@ export function HomepageBuilder() {
       ),
     );
 
-    const trimmedDomain = domain.trim() || undefined;
+    const { domain } = resolvedSite;
 
     // Both start now. Brand extraction usually settles within a second or two,
     // and the stage list shows it the moment it does rather than holding the
     // result hostage to the minute-long half.
-    const brandPromise = extractBrand(companyName, trimmedDomain).then(
-      (brand) => {
-        markStage('brand', 'done', brand.note);
-        setBrandInfo({ origin: brand.origin, note: brand.note });
-        return brand;
-      },
-    );
+    const brandPromise = extractBrand(domain).then((brand) => {
+      markStage('brand', 'done', brand.note);
+      setBrandInfo({ origin: brand.origin, note: brand.note, logo: brand.logo });
+      return brand;
+    });
 
     const contentPromise = generateContent({
-      companyName,
-      domain: trimmedDomain,
+      domain,
       discovery: notes.trim() ? { kind: 'notes', text: notes } : { kind: 'none' },
     }).then((response) => {
       markStage(
@@ -255,30 +264,38 @@ export function HomepageBuilder() {
           <form onSubmit={handleGenerate} className="flex flex-col gap-4">
             <label className="flex flex-col gap-1.5">
               <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
-                Company name <span className="text-red-600">*</span>
+                Website <span className="text-red-600">*</span>
               </span>
               <input
                 required
-                value={companyName}
-                onChange={(e) => setCompanyName(e.target.value)}
-                placeholder="Harborline Logistics"
-                className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                value={website}
+                onChange={(e) => setWebsite(e.target.value)}
+                placeholder="farmers.com"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                className={`rounded-md border bg-white px-3 py-2 text-sm text-zinc-900 outline-none dark:bg-zinc-900 dark:text-zinc-100 ${
+                  website.trim() && !resolvedSite
+                    ? 'border-amber-500'
+                    : 'border-zinc-300 focus:border-zinc-500 dark:border-zinc-700'
+                }`}
               />
-            </label>
-
-            <label className="flex flex-col gap-1.5">
-              <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
-                Website or domain
-              </span>
-              <input
-                value={domain}
-                onChange={(e) => setDomain(e.target.value)}
-                placeholder="harborline.com"
-                className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-              />
-              <span className="text-xs text-zinc-500">
-                Optional. Helps the brand-color and business-context lookup.
-              </span>
+              {website.trim() && !resolvedSite ? (
+                <span className="text-xs text-amber-700 dark:text-amber-500">
+                  Not a usable domain. Enter something like farmers.com.
+                </span>
+              ) : resolvedSite ? (
+                <span className="text-xs text-zinc-500">
+                  <span className="font-mono">{resolvedSite.domain}</span> · company
+                  name read as &ldquo;{resolvedSite.companyName}&rdquo;, refined during
+                  generation
+                </span>
+              ) : (
+                <span className="text-xs text-zinc-500">
+                  The site grounds the brand colours, the logo, and the business
+                  context.
+                </span>
+              )}
             </label>
 
             <label className="flex flex-col gap-1.5">
@@ -300,7 +317,7 @@ export function HomepageBuilder() {
 
             <button
               type="submit"
-              disabled={busy || !companyName.trim()}
+              disabled={busy || !resolvedSite}
               className="rounded-md bg-zinc-900 px-4 py-2.5 text-sm font-medium text-white disabled:opacity-40 dark:bg-zinc-100 dark:text-zinc-900"
             >
               {busy ? 'Searching and generating…' : 'Generate'}
@@ -312,6 +329,11 @@ export function HomepageBuilder() {
               <p className="text-sm font-medium text-red-900 dark:text-red-200">
                 {result.message}
               </p>
+              {result.costUsd !== undefined && (
+                <p className="mt-1 text-sm font-semibold tabular-nums text-red-900 dark:text-red-200">
+                  ${result.costUsd.toFixed(2)} spent
+                </p>
+              )}
               {result.issues.length > 0 && (
                 <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-red-800 dark:text-red-300">
                   {result.issues.map((issue, i) => (
@@ -339,10 +361,7 @@ export function HomepageBuilder() {
               <section className="flex flex-col gap-3">
                 <div>
                   <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                    Brand colors{' '}
-                    <span className="font-normal text-zinc-500">
-                      · this generation cost ${result.costUsd.toFixed(3)}
-                    </span>
+                    Brand colors
                   </h2>
                   <p className="text-xs text-zinc-500">
                     {brandInfo
@@ -378,6 +397,8 @@ export function HomepageBuilder() {
                   ))}
                 </div>
               </section>
+
+              <LogoSection logo={brandInfo?.logo} />
 
               <section className="flex flex-col gap-3">
                 <div>
@@ -470,6 +491,47 @@ export function HomepageBuilder() {
                 sandbox=""
                 className="h-[70vh] w-full rounded-md border border-zinc-300 bg-white dark:border-zinc-700"
               />
+
+              {/*
+                Deliberately prominent. This is the number that decides whether
+                the tool is viable across a team, so it is not a footnote.
+              */}
+              {result?.ok && (
+                <div className="flex flex-wrap items-baseline gap-2 rounded-md border border-zinc-300 px-4 py-3 dark:border-zinc-700">
+                  <span className="text-sm text-zinc-600 dark:text-zinc-400">
+                    This generation cost
+                  </span>
+                  <span className="text-2xl font-semibold tabular-nums text-zinc-900 dark:text-zinc-50">
+                    ${result.costUsd.toFixed(2)}
+                  </span>
+                  {result.attempts > 1 && (
+                    <span className="text-sm text-zinc-600 dark:text-zinc-400">
+                      · {result.attempts} attempts, the first was rejected
+                    </span>
+                  )}
+                </div>
+              )}
+
+              <div>
+                <p className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                  Next steps
+                </p>
+                <ol className="mt-1.5 list-decimal space-y-1 pl-5 text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
+                  <li>
+                    Copy the HTML and paste it into a new OvalEdge Data Story.
+                  </li>
+                  <li>
+                    Replace{' '}
+                    {/* Imported from the template, never retyped, so the string
+                        shown here cannot drift from the one in the HTML. */}
+                    <code className="rounded bg-zinc-100 px-1 py-0.5 font-mono text-[11px] break-all text-zinc-800 dark:bg-zinc-800 dark:text-zinc-200">
+                      {LOGO_PLACEHOLDER_SRC}
+                    </code>{' '}
+                    with the logo provided above.
+                  </li>
+                  <li>Publish the Data Story as a homepage widget.</li>
+                </ol>
+              </div>
             </>
           ) : busy ? (
             <GenerationProgress stages={stages} />
@@ -490,6 +552,91 @@ export function HomepageBuilder() {
         onPublish={handlePublish}
       />}
     </div>
+  );
+}
+
+const LOGO_SOURCE_LABEL: Record<string, string> = {
+  'og:image': 'og:image meta tag',
+  'apple-touch-icon': 'apple-touch-icon',
+  favicon: 'favicon',
+};
+
+/** A file extension for the download, derived from what the server actually got. */
+function logoFilename(contentType: string): string {
+  const extension =
+    { 'image/svg+xml': 'svg', 'image/png': 'png', 'image/webp': 'webp',
+      'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/x-icon': 'ico',
+      'image/vnd.microsoft.icon': 'ico' }[contentType] ?? 'img';
+  return `logo.${extension}`;
+}
+
+/**
+ * The logo, when the site had one.
+ *
+ * Always rendered, including the empty case — a section that vanishes when
+ * nothing was found leaves the SE wondering whether it was tried. Upload stays
+ * manual (see docs/KNOWN-ISSUES.md), so the instruction has to name the exact
+ * placeholder string to search for in the pasted HTML.
+ */
+function LogoSection({ logo }: { logo?: LogoAsset }) {
+  return (
+    <section className="flex flex-col gap-3">
+      <div>
+        <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+          Logo
+        </h2>
+        <p className="text-xs text-zinc-500">
+          {logo
+            ? `Found via ${LOGO_SOURCE_LABEL[logo.from] ?? logo.from} · ${logo.contentType} · ${Math.max(1, Math.round(logo.bytes / 1024))} KB`
+            : 'No logo found on the site. Add one by hand.'}
+        </p>
+      </div>
+
+      {logo && (
+        <div className="flex items-center gap-4 rounded-md border border-zinc-200 p-3 dark:border-zinc-800">
+          {/*
+            A data: URI from the server, not a remote URL — so it renders with
+            no cross-origin request and `download` actually downloads.
+            eslint-disable-next-line @next/next/no-img-element: next/image
+            cannot optimise a data URI, and this is a preview of bytes we
+            already hold.
+          */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={logo.dataUri}
+            alt="Logo found on the company site"
+            className="h-14 w-14 shrink-0 object-contain"
+          />
+          <a
+            href={logo.dataUri}
+            download={logoFilename(logo.contentType)}
+            className="rounded-md border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-900"
+          >
+            Download
+          </a>
+        </div>
+      )}
+
+      <ol className="list-decimal space-y-1 pl-5 text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
+        {logo ? (
+          <li>Download the logo above.</li>
+        ) : (
+          <li>Get the company logo yourself — the site did not expose one.</li>
+        )}
+        <li>Upload it in the OvalEdge homepage editor.</li>
+        <li>
+          In the HTML you pasted, find the placeholder{' '}
+          <code className="rounded bg-zinc-100 px-1 py-0.5 font-mono text-[11px] break-all text-zinc-800 dark:bg-zinc-800 dark:text-zinc-200">
+            {LOGO_PLACEHOLDER_SRC}
+          </code>{' '}
+          and replace it with the{' '}
+          <code className="rounded bg-zinc-100 px-1 py-0.5 font-mono text-[11px] text-zinc-800 dark:bg-zinc-800 dark:text-zinc-200">
+            ovaledgeimages/editorimage/&lt;uuid&gt;
+          </code>{' '}
+          path the upload returns.
+        </li>
+      </ol>
+    </section>
   );
 }
 

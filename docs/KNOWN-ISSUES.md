@@ -51,6 +51,16 @@ server. `OvalEdgeTerm` omits them for the same reason it omits `category`.
 
 ## Logo upload requires a browser session
 
+**Fetching the logo is now automatic. Uploading it is still manual.**
+
+`resolveBrand` finds the logo while it is already reading the site — apple-touch-icon,
+then favicon, then og:image as a last resort — preferring SVG/PNG over ICO and larger over
+smaller within each source. It is fetched server-side and returned as a data URI so the
+browser can display and download it without a cross-origin request. Failure is silent by
+design: no logo means the section says so and everything else proceeds.
+
+Uploading is what remains blocked.
+
 **Endpoint:** `POST /wikicontroller/setWikiImage`
 
 Needs an `X-Csrf-Token` header **and** a session cookie — not an API key, not a JWT. It is
@@ -63,7 +73,20 @@ browser automation. Both are a step up in fragility.
 
 **Current behaviour:** the generated HTML ships an `<img>` with a clearly marked
 placeholder src (`ovaledgeimages/editorimage/UPLOAD-LOGO-THEN-PASTE-REAL-UUID-HERE`). The
-SE uploads the logo and pastes the returned UUID.
+SE downloads the fetched logo from the UI, uploads it in the OvalEdge editor, and replaces
+that placeholder with the returned UUID path. The UI names the placeholder string verbatim
+so it can be searched for in the pasted HTML.
+
+**Why `og:image` is last:** it was tried first initially, and on many sites it is a social
+share card sized for a link preview rather than a mark — stripe.com returned a 305 KB JPEG
+banner, which is the wrong asset for the template's 190px slot. The touch icon and the
+favicon are almost always the real logo, so they take priority even though they are
+smaller; with the order reversed, Stripe resolves to a ~400 byte `favicon.svg`. `og:image`
+remains as a last resort for sites that declare neither.
+
+The UI still shows which source matched along with the type and size, so a wrong asset
+stays visible rather than silently used. Priority is the order of the `LOGO_SOURCES` array
+in `src/lib/brand.ts` and nothing else.
 
 Related: **never invent an image UUID.** A fabricated one renders as a broken image with
 no visible error in the editor. The placeholder is deliberately not UUID-shaped so it is

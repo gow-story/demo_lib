@@ -1,6 +1,12 @@
 'use server';
 
-import { resolveBrand, type BrandOrigin } from '@/src/lib/brand';
+import {
+  NEUTRAL_BRAND,
+  resolveBrand,
+  type BrandOrigin,
+  type LogoAsset,
+} from '@/src/lib/brand';
+import { companyNameFromDomain, normalizeDomain } from '@/src/lib/domain';
 import { resolveDiscovery, type DiscoverySource } from '@/src/lib/discovery';
 import { generatePackage } from '@/src/lib/generate-package';
 import { addTerms, demoDomain, type CreatedTerm } from '@/src/lib/ovaledge/client';
@@ -14,9 +20,13 @@ import { GlossarySchema, type Brand, type DemoPackage } from '@/src/lib/schema';
  * build instead of leaking the key.
  */
 
+/**
+ * The website is the only required input. The company name is derived from it
+ * rather than typed, so the two can never disagree — and the derivation lives
+ * server-side so a client sending a mismatched pair is not possible.
+ */
 export interface GenerateRequest {
-  companyName: string;
-  domain?: string;
+  domain: string;
   discovery: DiscoverySource;
 }
 
@@ -24,6 +34,8 @@ export interface BrandResponse {
   brand: Brand;
   origin: BrandOrigin;
   note: string;
+  /** Absent when the site had no usable logo, or had no site to read. */
+  logo?: LogoAsset;
 }
 
 export type ContentResponse =
@@ -34,7 +46,14 @@ export type ContentResponse =
       /** USD for this generation, so the number is visible in the UI too. */
       costUsd: number;
     }
-  | { ok: false; message: string; issues: string[]; rawOutput?: string };
+  | {
+      ok: false;
+      message: string;
+      issues: string[];
+      rawOutput?: string;
+      /** A run that failed twice still spent tokens — arguably the ones that matter most. */
+      costUsd?: number;
+    };
 
 /**
  * Brand extraction, as its own action.
@@ -46,16 +65,26 @@ export type ContentResponse =
  *
  * Makes no Anthropic call: the palette is scraped from the company's site.
  */
-export async function extractBrand(
-  companyName: string,
-  domain?: string,
-): Promise<BrandResponse> {
+export async function extractBrand(domain: string): Promise<BrandResponse> {
+  const normalized = normalizeDomain(domain);
+  if (!normalized) {
+    return {
+      brand: NEUTRAL_BRAND,
+      origin: 'fallback',
+      note: `"${domain}" is not a usable website address; neutral palette applied.`,
+    };
+  }
+
   // resolveBrand never rejects — colour lookup must never block generation.
-  const resolution = await resolveBrand(companyName.trim(), domain);
+  const resolution = await resolveBrand(
+    companyNameFromDomain(normalized),
+    normalized,
+  );
   return {
     brand: resolution.brand,
     origin: resolution.origin,
     note: resolution.note,
+    logo: resolution.logo,
   };
 }
 
@@ -69,18 +98,20 @@ export async function extractBrand(
 export async function generateContent(
   request: GenerateRequest,
 ): Promise<ContentResponse> {
-  const companyName = request.companyName.trim();
-  if (!companyName) {
-    return { ok: false, message: 'Company name is required.', issues: [] };
+  const domain = normalizeDomain(request.domain);
+  if (!domain) {
+    return {
+      ok: false,
+      message: `"${request.domain}" is not a usable website address. Enter a domain such as farmers.com.`,
+      issues: [],
+    };
   }
+
+  const companyName = companyNameFromDomain(domain);
 
   try {
     const discovery = await resolveDiscovery(request.discovery);
-    const content = await generatePackage({
-      companyName,
-      domain: request.domain,
-      discovery,
-    });
+    const content = await generatePackage({ companyName, domain, discovery });
 
     // Logged on every path, including failures — a rejected generation still
     // spent tokens, and those are exactly the ones worth noticing.
@@ -93,6 +124,7 @@ export async function generateContent(
         message: `The generated JSON failed validation twice (${content.attempts} attempts).`,
         issues: content.issues,
         rawOutput: content.rawOutput,
+        costUsd: cost.total,
       };
     }
 

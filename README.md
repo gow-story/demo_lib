@@ -3,11 +3,15 @@
 Turns discovery-call notes into a demo homepage and business glossary for a prospect's
 OvalEdge tenant.
 
-Paste in a company name and your notes from the call. Demo Lib generates the homepage
-copy and a 6–8 term glossary, extracts the prospect's brand colors from their website,
-renders HTML that survives the OvalEdge editor, and publishes the glossary terms to your
-tenant. You copy the HTML into the homepage editor yourself; nothing is written to
-OvalEdge without an explicit click.
+Paste in the prospect's website and your notes from the call. Demo Lib generates the
+homepage copy and a 6–8 term glossary, extracts the prospect's brand colors and logo from
+their site, renders HTML that survives the OvalEdge editor, and publishes the glossary
+terms to your tenant. You copy the HTML into the homepage editor yourself; nothing is
+written to OvalEdge without an explicit click.
+
+The website is the only required field — it grounds the whole lookup in one specific
+company, which a free-text name cannot. The company name is derived from the domain and
+refined during generation.
 
 ## Prerequisites
 
