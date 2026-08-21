@@ -1,36 +1,66 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Demo Lib
 
-## Getting Started
+Turns discovery-call notes into a demo homepage and business glossary for a prospect's
+OvalEdge tenant.
 
-First, run the development server:
+Paste in a company name and your notes from the call. Demo Lib generates the homepage
+copy and a 6–8 term glossary, extracts the prospect's brand colors from their website,
+renders HTML that survives the OvalEdge editor, and publishes the glossary terms to your
+tenant. You copy the HTML into the homepage editor yourself; nothing is written to
+OvalEdge without an explicit click.
+
+## Prerequisites
+
+- **Node 22 or newer.** The check scripts run TypeScript through Node's type stripping.
+- **An Anthropic API key.** Generation costs roughly $0.13 per run.
+- **OvalEdge profile credentials** — the user token and secret from the credentials
+  download on your OvalEdge user profile. Not a JWT: those expire the same day, so the
+  app mints its own.
+
+## Setup
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Create a `.env.local` with the variables below before the first run, then open
+http://localhost:3000.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### Environment variables
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+All of these go in `.env.local`, which is gitignored. Never commit values.
 
-## Learn More
+| Variable | What it is |
+|---|---|
+| `ANTHROPIC_API_KEY` | Your Anthropic API key |
+| `OVALEDGE_HOST` | Tenant base URL, e.g. `https://<tenant>.ovaledge.cloud` |
+| `OVALEDGE_USER_TOKEN` | From your OvalEdge profile credentials download |
+| `OVALEDGE_USER_SECRET` | From the same download |
+| `OVALEDGE_DEMO_DOMAIN` | The one glossary domain generated terms land in |
 
-To learn more about Next.js, take a look at the following resources:
+Terms publish as **DRAFT** with no category, into that single domain. Reorganizing them
+into real domains and categories is a manual step in the OvalEdge UI — the API cannot
+create either. See [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md).
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Checks
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+npm run check:schema      # content guardrails and OvalEdge payload constraints
+npm run check:template    # renders the sample package, validates the generated HTML
+npx tsc --noEmit
+npx eslint .
+```
 
-## Deploy on Vercel
+Both check scripts must pass before a change lands. Neither makes a network call.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Docs
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- [docs/CHANGELOG.md](docs/CHANGELOG.md) — what has been built and why
+- [docs/ROADMAP.md](docs/ROADMAP.md) — what's next
+- [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md) — constraints and dead ends worth not re-investigating
+- [docs/ovaledge-api-notes.md](docs/ovaledge-api-notes.md) — auth, the term API, hard constraints
+- [docs/froala-notes.md](docs/froala-notes.md) — the HTML vocabulary the OvalEdge editor preserves
+- [docs/homepage-content-guidelines.md](docs/homepage-content-guidelines.md) — what the generated copy should say
+
+`CLAUDE.md` holds the architecture rules and boundaries for working in this repo.

@@ -51,6 +51,13 @@ npm run check:template    # renders the sample, validates against the Froala che
 - [docs/froala-notes.md](docs/froala-notes.md) — the HTML vocabulary that survives the editor
 - [docs/homepage-content-guidelines.md](docs/homepage-content-guidelines.md) — what the generated copy should say
 
+## Git
+Work directly on `main`. Never create a branch — this is a solo repo with no PR
+workflow, and that holds even when a remote is configured.
+
+Never run `git commit` or `git push`, and never stage changes. Leave edits in the
+working tree; the repo owner reviews and commits them.
+
 ## Changelog
 Update [docs/CHANGELOG.md](docs/CHANGELOG.md) as part of any feature work — the entry
 carries what changed and the reasoning behind it. Commit messages stay to a single
