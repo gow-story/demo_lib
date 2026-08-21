@@ -46,7 +46,7 @@ export function contentGuidelines(): string {
 export interface ClaudeCallOptions {
   /**
    * System prompt blocks. Put `cache_control` on the last stable block to cache
-   * everything before it — see the note in generate-homepage.ts.
+   * everything before it — see the note in generate-package.ts.
    */
   system: Anthropic.TextBlockParam[];
   messages: Anthropic.MessageParam[];

@@ -34,39 +34,105 @@ function containsBannedPhrase(value: string): string | undefined {
   return BANNED_PHRASES.find((phrase) => haystack.includes(phrase));
 }
 
-/** A single-line, plain-text field with a length ceiling. */
-function plainText(max: number) {
-  return z
-    .string()
-    .trim()
-    .min(1, 'must not be empty')
-    .max(max, `must be ${max} characters or fewer`)
+/**
+ * Guideline 8: never invent connector support, deployment support,
+ * certifications, or integrations.
+ *
+ * The failure mode this catches is real — an early run produced "delivers a
+ * unified catalog across Snowflake, SQL Server, and Salesforce", which is a
+ * connector claim nobody made. Naming a system is fine ("revenue data
+ * originates in Snowflake"); claiming a capability *about* it is not, so a
+ * violation needs a claim marker and a system name close together.
+ */
+const NAMED_SYSTEMS = [
+  'snowflake', 'databricks', 'salesforce', 'sql server', 'oracle', 'redshift',
+  'bigquery', 'tableau', 'power bi', 'sap', 'informatica', 'collibra',
+  'alation', 'kafka', 'dbt', 'mongodb', 'postgres', 'mysql', 'teradata',
+  'hadoop', 'azure', 'aws', 'gcp', 'looker', 'qlik', 'workday', 'netsuite',
+  'servicenow', 'sharepoint', 'ovaledge',
+] as const;
+
+const CAPABILITY_MARKERS = [
+  'integrat', 'connector', 'connects to', 'natively', 'native support',
+  'out of the box', 'out-of-the-box', 'certified', 'seamless', 'plug and play',
+  'plug-and-play', 'pre-built', 'prebuilt', 'syncs', 'sync with',
+  'unified catalog', 'single catalog', 'catalog across', 'catalogs ',
+  'governs ', 'works with', 'compatible with',
+] as const;
+
+/** How far apart a marker and a system name may sit and still count as a claim. */
+const CLAIM_WINDOW = 50;
+
+function containsCapabilityClaim(value: string): string | undefined {
+  const haystack = value.toLowerCase();
+
+  for (const system of NAMED_SYSTEMS) {
+    let at = haystack.indexOf(system);
+    while (at !== -1) {
+      const window = haystack.slice(
+        Math.max(0, at - CLAIM_WINDOW),
+        at + system.length + CLAIM_WINDOW,
+      );
+      const marker = CAPABILITY_MARKERS.find((m) => window.includes(m));
+      if (marker) return `"${marker.trim()}" near "${system}"`;
+      at = haystack.indexOf(system, at + system.length);
+    }
+  }
+  return undefined;
+}
+
+/** The three content guardrails every generated text field carries. */
+function guarded<T extends z.ZodString>(schema: T) {
+  return schema
     .refine(
       (v) => !HTML_LIKE.test(v),
       'must be plain text — all markup comes from src/templates/',
     )
-    .refine((v) => !v.includes('\n'), 'must be a single line')
     .refine((v) => containsBannedPhrase(v) === undefined, {
       error: (issue) =>
         `contains banned buzzword "${containsBannedPhrase(String(issue.input))}"`,
+    })
+    .refine((v) => containsCapabilityClaim(v) === undefined, {
+      error: (issue) =>
+        `reads as an invented capability claim — ${containsCapabilityClaim(String(issue.input))}. Name a system, but do not claim support for it.`,
     });
+}
+
+/** A single-line, plain-text field with a length ceiling. */
+function plainText(max: number) {
+  return guarded(
+    z
+      .string()
+      .trim()
+      .min(1, 'must not be empty')
+      .max(max, `must be ${max} characters or fewer`),
+  ).refine((v) => !v.includes('\n'), 'must be a single line');
 }
 
 /** A prose paragraph: plain text, but multi-sentence and longer. */
 function paragraph(min: number, max: number) {
-  return z
-    .string()
-    .trim()
-    .min(min, `must be at least ${min} characters`)
-    .max(max, `must be ${max} characters or fewer`)
-    .refine(
-      (v) => !HTML_LIKE.test(v),
-      'must be plain text — all markup comes from src/templates/',
-    )
-    .refine((v) => containsBannedPhrase(v) === undefined, {
-      error: (issue) =>
-        `contains banned buzzword "${containsBannedPhrase(String(issue.input))}"`,
-    });
+  return guarded(
+    z
+      .string()
+      .trim()
+      .min(min, `must be at least ${min} characters`)
+      .max(max, `must be ${max} characters or fewer`),
+  );
+}
+
+/**
+ * Glossary prose. Same guardrails as `paragraph`, but newlines are allowed —
+ * detail fields carry short labelled sections that end up in one OvalEdge
+ * rich-text field.
+ */
+function richText(max: number) {
+  return guarded(
+    z
+      .string()
+      .trim()
+      .min(1, 'must not be empty')
+      .max(max, `must be ${max} characters or fewer`),
+  );
 }
 
 /**
@@ -180,10 +246,64 @@ export const HomepageSchema = z.object({
   footerStatement: plainText(160),
 });
 
+/**
+ * One business glossary term, destined for the OvalEdge term API.
+ *
+ * The five detail fields belong to the hero metric — the one term the demo
+ * actually walks through. Ordinary terms carry a name and a business
+ * description and stop there; over-detailing every term is what makes a
+ * glossary look generated.
+ */
+export const GlossaryTermSchema = z.object({
+  termName: plainText(60),
+  businessDescription: richText(300),
+  detailDescription: richText(1200).optional(),
+  isHeroMetric: z.boolean(),
+  /** How the metric is calculated. Required on the hero metric. */
+  formula: richText(300).optional(),
+  /** The inputs the formula draws on. */
+  components: richText(600).optional(),
+  commonMistakes: richText(800).optional(),
+  bestPractices: richText(800).optional(),
+  abbreviations: richText(300).optional(),
+});
+
+export const GLOSSARY_MIN_TERMS = 6;
+export const GLOSSARY_MAX_TERMS = 8;
+
+export const GlossarySchema = z.object({
+  terms: z
+    .array(GlossaryTermSchema)
+    .min(GLOSSARY_MIN_TERMS, `must contain at least ${GLOSSARY_MIN_TERMS} terms`)
+    .max(GLOSSARY_MAX_TERMS, `must contain at most ${GLOSSARY_MAX_TERMS} terms`)
+    .refine(
+      (terms) =>
+        new Set(terms.map((t) => t.termName.trim().toLowerCase())).size ===
+        terms.length,
+      'term names must be distinct',
+    )
+    .refine((terms) => terms.filter((t) => t.isHeroMetric).length === 1, {
+      error: (issue) =>
+        `exactly one term must be the hero metric, found ${
+          (issue.input as Array<{ isHeroMetric: boolean }>).filter(
+            (t) => t.isHeroMetric,
+          ).length
+        }`,
+    })
+    .refine(
+      (terms) => terms.every((t) => !t.isHeroMetric || Boolean(t.formula)),
+      'the hero metric must carry a formula',
+    ),
+});
+
 export const DemoPackageSchema = z.object({
   prospect: ProspectSchema,
   homepage: HomepageSchema,
+  glossary: GlossarySchema,
 });
+
+export type GlossaryTerm = z.infer<typeof GlossaryTermSchema>;
+export type Glossary = z.infer<typeof GlossarySchema>;
 
 export type HexColor = z.infer<typeof HexColorSchema>;
 export type Brand = z.infer<typeof BrandSchema>;

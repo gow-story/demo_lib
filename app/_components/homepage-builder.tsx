@@ -2,9 +2,15 @@
 
 import { useMemo, useState } from 'react';
 
-import { generateDemoPackage, type GenerateResponse } from '../actions';
+import {
+  generateDemoPackage,
+  publishGlossary,
+  type GenerateResponse,
+  type PublishResponse,
+} from '../actions';
 import { NAV_HREF } from '@/src/lib/nav-href';
-import type { Brand, DemoPackage } from '@/src/lib/schema';
+import { buildDetailDescription } from '@/src/lib/ovaledge/map-terms';
+import type { Brand, DemoPackage, GlossaryTerm } from '@/src/lib/schema';
 import { renderHomepage } from '@/src/templates/homepage';
 import { validateFroalaHtml } from '@/src/templates/validate';
 
@@ -41,6 +47,8 @@ export function HomepageBuilder() {
   const [pkg, setPkg] = useState<DemoPackage | null>(null);
   const [tagHrefs, setTagHrefs] = useState<string[]>(EMPTY_TAG_HREFS);
   const [copied, setCopied] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const [publishResult, setPublishResult] = useState<PublishResponse | null>(null);
 
   /**
    * The package actually rendered: generated content, plus whatever the user
@@ -75,6 +83,7 @@ export function HomepageBuilder() {
     setResult(null);
     setPkg(null);
     setTagHrefs(EMPTY_TAG_HREFS);
+    setPublishResult(null);
 
     const response = await generateDemoPackage({
       companyName,
@@ -101,6 +110,45 @@ export function HomepageBuilder() {
           }
         : current,
     );
+  }
+
+  function updateTerm(index: number, patch: Partial<GlossaryTerm>) {
+    setPkg((current) =>
+      current
+        ? {
+            ...current,
+            glossary: {
+              terms: current.glossary.terms.map((term, i) =>
+                i === index ? { ...term, ...patch } : term,
+              ),
+            },
+          }
+        : current,
+    );
+  }
+
+  /** Exactly one hero metric — selecting one clears the rest. */
+  function selectHeroMetric(index: number) {
+    setPkg((current) =>
+      current
+        ? {
+            ...current,
+            glossary: {
+              terms: current.glossary.terms.map((term, i) => ({
+                ...term,
+                isHeroMetric: i === index,
+              })),
+            },
+          }
+        : current,
+    );
+  }
+
+  async function handlePublish() {
+    if (!pkg || publishing) return;
+    setPublishing(true);
+    setPublishResult(await publishGlossary(pkg.glossary));
+    setPublishing(false);
   }
 
   async function handleCopy() {
@@ -355,6 +403,184 @@ export function HomepageBuilder() {
           )}
         </div>
       </div>
+
+      {pkg && <GlossarySection
+        terms={pkg.glossary.terms}
+        publishing={publishing}
+        publishResult={publishResult}
+        onUpdateTerm={updateTerm}
+        onSelectHero={selectHeroMetric}
+        onPublish={handlePublish}
+      />}
     </div>
+  );
+}
+
+interface GlossarySectionProps {
+  terms: GlossaryTerm[];
+  publishing: boolean;
+  publishResult: PublishResponse | null;
+  onUpdateTerm: (index: number, patch: Partial<GlossaryTerm>) => void;
+  onSelectHero: (index: number) => void;
+  onPublish: () => void;
+}
+
+function GlossarySection({
+  terms,
+  publishing,
+  publishResult,
+  onUpdateTerm,
+  onSelectHero,
+  onPublish,
+}: GlossarySectionProps) {
+  const hero = terms.find((term) => term.isHeroMetric);
+  /**
+   * The schema requires the hero metric to carry a formula, so moving the flag
+   * to a plain term makes the publish fail server-side. Say so up front rather
+   * than letting the user find out by clicking.
+   */
+  const heroMissingFormula = Boolean(hero && !hero.formula?.trim());
+  const published = publishResult?.ok === true;
+
+  return (
+    <section className="mt-10 border-t border-zinc-200 pt-8 dark:border-zinc-800">
+      <div className="mb-4 flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">
+            Business glossary
+          </h2>
+          <p className="text-sm text-zinc-600 dark:text-zinc-400">
+            {terms.length} terms. Edit before publishing — nothing reaches
+            OvalEdge until you click publish.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onPublish}
+          disabled={publishing || published}
+          className="rounded-md bg-zinc-900 px-4 py-2.5 text-sm font-medium text-white disabled:opacity-40 dark:bg-zinc-100 dark:text-zinc-900"
+        >
+          {published
+            ? 'Published'
+            : publishing
+              ? 'Publishing…'
+              : 'Publish to OvalEdge'}
+        </button>
+      </div>
+
+      {heroMissingFormula && (
+        <p className="mb-4 rounded-md border border-amber-400 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200">
+          The selected hero metric has no formula, so publishing will be
+          rejected. Pick the term that was generated as the hero metric, or add
+          a formula to this one.
+        </p>
+      )}
+
+      {publishResult && !publishResult.ok && (
+        <div className="mb-4 rounded-md border border-red-300 bg-red-50 p-4 dark:border-red-900 dark:bg-red-950/40">
+          <p className="text-sm font-medium text-red-900 dark:text-red-200">
+            {publishResult.message}
+          </p>
+          {publishResult.issues.length > 0 && (
+            <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-red-800 dark:text-red-300">
+              {publishResult.issues.map((issue, i) => (
+                <li key={i} className="font-mono">
+                  {issue}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {publishResult?.ok && (
+        <div className="mb-4 rounded-md border border-emerald-300 bg-emerald-50 p-4 dark:border-emerald-800 dark:bg-emerald-950/40">
+          <p className="text-sm font-medium text-emerald-900 dark:text-emerald-200">
+            {publishResult.created.length} term(s) created in domain &ldquo;
+            {publishResult.domain}&rdquo; as DRAFT.
+          </p>
+          <ul className="mt-2 space-y-0.5 text-xs text-emerald-900 dark:text-emerald-300">
+            {publishResult.created.map((term) => (
+              <li key={term.termId} className="font-mono">
+                {term.termId} · {term.termName}
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-xs text-emerald-800 dark:text-emerald-400">
+            Reorganize into the real domains and categories in the OvalEdge UI —
+            the API cannot create either.
+          </p>
+        </div>
+      )}
+
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[48rem] border-collapse text-left">
+          <thead>
+            <tr className="border-b border-zinc-300 dark:border-zinc-700">
+              <th className="w-20 px-2 py-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                Hero
+              </th>
+              <th className="w-64 px-2 py-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                Term
+              </th>
+              <th className="px-2 py-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                Business description
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {terms.map((term, index) => (
+              <tr
+                key={index}
+                className="border-b border-zinc-200 align-top dark:border-zinc-800"
+              >
+                <td className="px-2 py-2">
+                  <input
+                    type="radio"
+                    name="hero-metric"
+                    checked={term.isHeroMetric}
+                    onChange={() => onSelectHero(index)}
+                    disabled={published}
+                    aria-label={`Make ${term.termName} the hero metric`}
+                    className="mt-2 h-4 w-4 cursor-pointer"
+                  />
+                </td>
+                <td className="px-2 py-2">
+                  <input
+                    value={term.termName}
+                    onChange={(e) =>
+                      onUpdateTerm(index, { termName: e.target.value })
+                    }
+                    disabled={published}
+                    className="w-full rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-sm text-zinc-900 outline-none focus:border-zinc-500 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                  />
+                </td>
+                <td className="px-2 py-2">
+                  <textarea
+                    value={term.businessDescription}
+                    onChange={(e) =>
+                      onUpdateTerm(index, { businessDescription: e.target.value })
+                    }
+                    disabled={published}
+                    rows={3}
+                    className="w-full rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-sm text-zinc-900 outline-none focus:border-zinc-500 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                  />
+                  {term.isHeroMetric && (
+                    <details className="mt-1">
+                      <summary className="cursor-pointer text-xs text-zinc-500">
+                        Detail sent to OvalEdge for this term
+                      </summary>
+                      <pre className="mt-1 max-h-56 overflow-auto rounded bg-zinc-100 p-2 text-[11px] leading-relaxed whitespace-pre-wrap text-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
+                        {buildDetailDescription(term) ?? '(none)'}
+                      </pre>
+                    </details>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }

@@ -6,10 +6,12 @@
  */
 import {
   DemoPackageSchema,
+  GLOSSARY_MAX_TERMS,
   PURPOSE_PARAGRAPH_MAX,
   type DemoPackage,
 } from '../src/lib/schema.ts';
 import { sampleDemoPackage } from '../src/lib/sample.ts';
+import { toOvalEdgeTerms } from '../src/lib/ovaledge/map-terms.ts';
 
 let failures = 0;
 
@@ -101,6 +103,76 @@ const rejectionCases: Array<{ name: string; mutate: (pkg: DemoPackage) => void }
       pkg.homepage.quickAccessLinks.push('search');
     },
   },
+  {
+    name: 'no hero metric',
+    mutate: (pkg) => {
+      for (const term of pkg.glossary.terms) term.isHeroMetric = false;
+    },
+  },
+  {
+    name: 'two hero metrics',
+    mutate: (pkg) => {
+      pkg.glossary.terms[1].isHeroMetric = true;
+    },
+  },
+  {
+    name: 'hero metric without a formula',
+    mutate: (pkg) => {
+      const hero = pkg.glossary.terms.find((t) => t.isHeroMetric)!;
+      delete hero.formula;
+    },
+  },
+  {
+    name: 'HTML in a glossary field',
+    mutate: (pkg) => {
+      pkg.glossary.terms[1].businessDescription =
+        'The delivery window <strong>promised</strong> at booking.';
+    },
+  },
+  {
+    name: 'banned buzzword in a glossary field',
+    mutate: (pkg) => {
+      pkg.glossary.terms[2].businessDescription =
+        'A measure used to democratize data across the freight organization.';
+    },
+  },
+  {
+    name: 'invented capability claim about a named system',
+    mutate: (pkg) => {
+      pkg.glossary.terms[2].businessDescription =
+        'Freight spend per shipment, delivered through a unified catalog across Snowflake and SQL Server.';
+    },
+  },
+  {
+    name: 'too few glossary terms',
+    mutate: (pkg) => {
+      pkg.glossary.terms = pkg.glossary.terms.slice(0, 4);
+    },
+  },
+  {
+    name: 'too many glossary terms',
+    mutate: (pkg) => {
+      while (pkg.glossary.terms.length <= GLOSSARY_MAX_TERMS) {
+        pkg.glossary.terms.push({
+          ...pkg.glossary.terms[1],
+          termName: `Filler Term ${pkg.glossary.terms.length}`,
+        });
+      }
+    },
+  },
+  {
+    name: 'duplicate term names',
+    mutate: (pkg) => {
+      pkg.glossary.terms[2].termName = pkg.glossary.terms[1].termName;
+    },
+  },
+  {
+    name: 'capability claim in homepage prose',
+    mutate: (pkg) => {
+      pkg.homepage.purpose.solution =
+        'The platform integrates with Snowflake and Salesforce so every regional team works from one certified source.';
+    },
+  },
 ];
 
 for (const { name, mutate } of rejectionCases) {
@@ -125,6 +197,63 @@ if (tagHrefCheck.success) {
 } else {
   failures++;
   console.log(`FAIL  tagHref with query string rejected: ${tagHrefCheck.error.issues[0].message}`);
+}
+
+// Naming a system is allowed — only claiming a capability about it is not. This
+// guards the capability check against being over-eager.
+const namesSystem: DemoPackage = structuredClone(sampleDemoPackage);
+namesSystem.glossary.terms[1].businessDescription =
+  'The delivery date range quoted at booking. Recorded in Snowflake, and re-keyed by hand in two regions.';
+const namesSystemCheck = DemoPackageSchema.safeParse(namesSystem);
+if (namesSystemCheck.success) {
+  console.log('PASS  "names a system without claiming support" accepted');
+} else {
+  failures++;
+  console.log(
+    `FAIL  naming a system was rejected: ${namesSystemCheck.error.issues[0].message}`,
+  );
+}
+
+// The OvalEdge payload constraints, verified without touching the network.
+const payload = toOvalEdgeTerms(sampleDemoPackage.glossary, 'Demo');
+const heroTerm = sampleDemoPackage.glossary.terms.find((t) => t.isHeroMetric)!;
+const heroPayload = payload.find((t) => t.termName === heroTerm.termName)!;
+
+const payloadChecks: Array<{ name: string; ok: boolean }> = [
+  {
+    name: 'no category key on any term (the API cannot create categories)',
+    ok: payload.every((term) => !('category' in term)),
+  },
+  {
+    name: 'no governance roles set (they auto-fill from the token)',
+    ok: payload.every(
+      (term) =>
+        !('steward' in term) && !('owner' in term) && !('custodian' in term),
+    ),
+  },
+  {
+    name: 'every term carries action "add" and the one demo domain',
+    ok: payload.every(
+      (term) => term.action === 'add' && term.domainName === 'Demo',
+    ),
+  },
+  {
+    name: "hero metric's formula is folded into detailDescription",
+    ok: Boolean(heroPayload.detailDescription?.includes('Formula')),
+  },
+  {
+    name: 'ordinary terms carry no detailDescription',
+    ok: payload.filter((term) => term.detailDescription).length === 1,
+  },
+];
+
+for (const { name, ok } of payloadChecks) {
+  if (ok) {
+    console.log(`PASS  ${name}`);
+  } else {
+    failures++;
+    console.log(`FAIL  ${name}`);
+  }
 }
 
 if (failures > 0) {

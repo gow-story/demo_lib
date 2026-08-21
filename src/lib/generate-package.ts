@@ -43,6 +43,21 @@ Return ONLY a JSON object. No prose, no explanation, no code fence.
     "cards": [ { "title": string, "description": string }, ... exactly 3 ],
     "quickAccessLinks": [ "search" | "glossary" | "marketplace" | "lineage" ],
     "footerStatement": string
+  },
+  "glossary": {
+    "terms": [
+      {
+        "termName": string,
+        "businessDescription": string,
+        "detailDescription": string (optional),
+        "isHeroMetric": boolean,
+        "formula": string (optional),
+        "components": string (optional),
+        "commonMistakes": string (optional),
+        "bestPractices": string (optional),
+        "abbreviations": string (optional)
+      }
+    ]
   }
 }
 
@@ -58,7 +73,27 @@ Hard rules, each enforced by a validator that will reject your output:
 - "quickAccessLinks" is any subset of the four allowed values, in the order you
   want them rendered. Pick the ones the discovery context actually justifies.
 - Do NOT emit a "tagHref" on any card. Tag page links are added by hand later,
-  and a made-up tag id is worse than no link.`;
+  and a made-up tag id is worse than no link.
+
+## Glossary rules
+
+- 6 to 8 terms, with distinct names. These are the business terms this customer
+  actually argues about — the ones the discovery context points at. Not generic
+  data-governance vocabulary.
+- "businessDescription": what the term means to the business, in their language.
+  300 characters or fewer. Plain language, not a data dictionary entry.
+- EXACTLY ONE term has "isHeroMetric": true. Every other term has false. The hero
+  metric is the single number the demo walks through end to end — pick the one
+  the discovery context suggests they argue about most.
+- The hero metric MUST carry "formula", and should also carry "components",
+  "commonMistakes", "bestPractices", and "abbreviations".
+- Ordinary terms should NOT carry those five fields. A glossary where every term
+  is exhaustively documented reads as generated. Leave them out.
+- Never invent a capability claim about a named system. Naming where data lives
+  is fine ("revenue is recorded in Snowflake"); claiming the platform integrates
+  with, connects to, catalogs, or is certified for it is not — you have no way
+  to know that, and the validator rejects it.
+- Every glossary field is plain text and obeys the same buzzword ban as above.`;
 
 function buildTaskPrompt(input: GenerateHomepageInput): string {
   const lines = [
@@ -138,7 +173,7 @@ export type GenerateHomepageResult =
       usage: UsageTotals;
     };
 
-export async function generateHomepage(
+export async function generatePackage(
   input: GenerateHomepageInput,
 ): Promise<GenerateHomepageResult> {
   /**
@@ -182,15 +217,19 @@ export async function generateHomepage(
     try {
       const json = stripTagHrefs(extractJsonObject(rawOutput)) as {
         homepage?: unknown;
+        glossary?: unknown;
       };
 
-      // The prospect half is ours; only `homepage` comes from the model.
+      // `prospect` is ours; `homepage` and `glossary` come from the model, in
+      // one call — a second call would double the cached-prefix cost and let
+      // the two halves drift away from the same discovery context.
       const candidate = {
         prospect: {
           name: input.companyName,
           brand: input.brand ?? PLACEHOLDER_BRAND,
         },
         homepage: json.homepage,
+        glossary: json.glossary,
       };
 
       const parsed = DemoPackageSchema.safeParse(candidate);
