@@ -1,6 +1,6 @@
 # Froala / OvalEdge HTML Notes
 
-Ground truth: derived from a working, hand-built `homepage.html` (RaceTrac) that pastes
+Ground truth: derived from a working, hand-built `homepage.html` that pastes
 cleanly into OvalEdge's homepage editor, plus a live capture of the image upload request.
 Everything the template generates must stay inside this vocabulary.
 
