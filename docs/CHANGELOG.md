@@ -6,6 +6,42 @@ otherwise go in a long commit message lives — commit messages stay to one line
 
 ---
 
+## Publish errors from the mint no longer get wrapped as network failures
+
+`addTerms` wrapped everything its `try` block raised in "Could not reach OvalEdge at
+{host}: …". `authorizedFetch` mints a token first, so every mint error passed through
+that wrapper and came out doubled: "Could not reach OvalEdge at HOST: Token mint failed
+with HTTP 404 for POST HOST/api/user/token/generate."
+
+- **The catch now rethrows an `OvalEdgeError` untouched** and wraps only what it was
+  written for — a genuine transport failure from `fetch`. The doubling was the visible
+  symptom; the worse half was that a clean HTTP response, a missing environment variable,
+  and a non-JWT mint response all arrived labelled as a network problem.
+- **The transport wrapper names the full URL rather than the host**, matching the mint's
+  wording, so the one message that survives still says where the request went.
+- No other OvalEdge error doubles. The remaining `OvalEdgeError` throws in the file are
+  leaves — none of them wraps another one.
+
+## Token mint failures name the URL and stop blaming the path
+
+Publishing failed with `Token mint failed with HTTP 404`, which reads as a wrong path and
+is not one.
+
+- **The client was building the right URL all along.** `${OVALEDGE_HOST}/api/user/token/generate`
+  matched a working `curl` byte for byte, and Node's `fetch` against that exact string
+  returns a JWT. The 404 was OvalEdge's answer to a credential pair it did not recognise —
+  it never replies 401 on the mint endpoint, and the body is a generic "unexpected issue …
+  or insufficient permissions" that names neither cause.
+- **The 404 branch of the error now points at the credentials first and `OVALEDGE_HOST`
+  second**, instead of a flat "check the credentials" that happened to be right for the
+  wrong reason. Every other status keeps the original wording.
+- **`mintToken` logs `[ovaledge] POST <url>` before the request.** The URL carries no
+  credential, and having it in the console is what turns "is the path wrong?" from an
+  investigation into a glance. The error message names it too, so it reaches the browser
+  as well as the server log.
+- Recorded in [KNOWN-ISSUES.md](KNOWN-ISSUES.md) and [ovaledge-api-notes.md](ovaledge-api-notes.md)
+  so the next 404 does not start another path hunt.
+
 ## Renamed to Demo Kit
 
 The app's display name is now "Demo Kit" — the page heading, the README, `CLAUDE.md`, and

@@ -45,6 +45,11 @@ produces the credential, so sending one is a mistake.
 **The response is the raw JWT as plain text, not JSON.** Calling `.json()` on it fails.
 Read it with `response.text()`. A valid token starts with `eyJ` and contains two dots.
 
+**A bad credential pair comes back as HTTP 404, not 401.** The body is a generic
+"unexpected issue … or insufficient permissions" with no detail. Verified both ways: the
+same URL returns a JWT for a good pair and 404 for a bad one. Do not read a 404 here as a
+wrong path — the client prints the exact URL it requested, so check the pair first.
+
 How the client handles it (`src/lib/ovaledge/client.ts`):
 
 - The token is cached in module memory alongside its expiry, read by base64-decoding

@@ -152,6 +152,11 @@ async function mintToken(): Promise<string> {
   const { host, userToken, userSecret } = readEnv();
   const url = `${host}/api/user/token/generate`;
 
+  // The URL, not just the host: a mint failure is almost always about the exact
+  // string being requested, and reconstructing it from OVALEDGE_HOST by hand is
+  // how an afternoon gets spent. Safe to print — it carries no credential.
+  console.log(`[ovaledge] POST ${url}`);
+
   let response: Response;
   try {
     response = await fetch(url, {
@@ -170,8 +175,17 @@ async function mintToken(): Promise<string> {
   const text = (await response.text()).trim();
 
   if (!response.ok) {
+    // A 404 from this endpoint does not mean the path is wrong. Verified against
+    // the live tenant: the same URL returns a JWT for a good credential pair and
+    // 404 with a generic "unexpected issue / insufficient permissions" body for a
+    // pair OvalEdge does not recognise. It never answers 401 here. So a 404 points
+    // at the credentials first and the host second, not the other way round.
+    const hint =
+      response.status === 404
+        ? 'OvalEdge answers 404 here when it does not recognise the credential pair, so check OVALEDGE_USER_TOKEN and OVALEDGE_USER_SECRET first, then OVALEDGE_HOST.'
+        : 'Check OVALEDGE_USER_TOKEN and OVALEDGE_USER_SECRET.';
     throw new OvalEdgeError(
-      `Token mint failed with HTTP ${response.status}. Check OVALEDGE_USER_TOKEN and OVALEDGE_USER_SECRET.`,
+      `Token mint failed with HTTP ${response.status} for POST ${url}. ${hint}`,
       // Safe to include: a non-2xx body is an error message, not a token.
       text.slice(0, 500),
     );
@@ -300,8 +314,15 @@ export async function addTerms(terms: OvalEdgeTerm[]): Promise<AddTermsResult> {
       signal: AbortSignal.timeout(30_000),
     });
   } catch (error) {
+    // `authorizedFetch` mints a token first, so anything the mint raises passes
+    // through here. Those are already OvalEdgeErrors carrying a finished message —
+    // wrapping one produced "Could not reach OvalEdge at HOST: Token mint failed
+    // … for POST HOST/api/user/token/generate", naming the host twice and blaming
+    // the network for something that was a clean HTTP response. Rethrow as-is;
+    // only wrap the transport failures this catch was actually written for.
+    if (error instanceof OvalEdgeError) throw error;
     throw new OvalEdgeError(
-      `Could not reach OvalEdge at ${host}: ${error instanceof Error ? error.message : String(error)}`,
+      `Could not reach OvalEdge at ${url}: ${error instanceof Error ? error.message : String(error)}`,
       error,
     );
   }

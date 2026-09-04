@@ -134,6 +134,19 @@ from `OVALEDGE_USER_TOKEN` / `OVALEDGE_USER_SECRET` on demand.
 The mint endpoint (`POST /api/user/token/generate`) takes **no** `Authorization` header
 and returns the raw JWT as **plain text, not JSON**. Calling `.json()` on it fails.
 
+## A 404 from the mint endpoint means the credentials, not the path
+
+`POST /api/user/token/generate` answers **HTTP 404** — not 401 — when OvalEdge does not
+recognise the `userToken` / `userSecret` pair. The body is a generic "An unexpected issue
+occurred while processing your request… or insufficient permissions", which says nothing
+about which of the two it is.
+
+Confirmed against the live tenant: the identical URL returns a JWT for a good pair and
+404 for a bad one, from `curl` and from Node's `fetch` alike. So a 404 here is not a
+signal to go hunting for a wrong path or a mangled `OVALEDGE_HOST` — check the credential
+pair in `.env.local` first. The client logs the exact URL it requests (`[ovaledge] POST
+…`) so the path can be ruled out in one glance rather than by reconstructing it.
+
 ## Publishing is not idempotent
 
 `POST /api/term/addTerm/v2` has no upsert and no idempotency key. Publishing the same
