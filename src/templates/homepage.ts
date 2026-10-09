@@ -36,7 +36,7 @@ const BODY = '#3d4b5c';
 const HAIRLINE = '#d9dee5';
 const ON_DARK = '#ffffff';
 
-const CONTENT_WIDTH = 'width:100%; max-width:900px; margin:0 auto;';
+const CONTENT_WIDTH = 'width:100%;';
 
 /** The fixed OvalEdge destinations, keyed by the schema's enum. */
 const QUICK_ACCESS: Record<QuickAccessLink, { href: string; label: string }> = {

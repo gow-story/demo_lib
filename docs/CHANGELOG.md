@@ -6,6 +6,17 @@ otherwise go in a long commit message lives — commit messages stay to one line
 
 ---
 
+## Homepage sections fill the full OvalEdge container width
+
+Every major section took its width from `CONTENT_WIDTH`, which was
+`width:100%; max-width:900px; margin:0 auto;` — a centered 900px column inside a homepage
+container that is usually much wider, leaving wide empty gutters.
+
+- **`CONTENT_WIDTH` is now just `width:100%;`**, so sections and tables expand to whatever
+  width OvalEdge gives the homepage. Padding inside sections is unchanged.
+- The logo keeps its `max-width:100%` — that only stops the image overflowing on narrow
+  screens and doesn't constrain the page.
+
 ## Publish errors from the mint no longer get wrapped as network failures
 
 `addTerms` wrapped everything its `try` block raised in "Could not reach OvalEdge at
